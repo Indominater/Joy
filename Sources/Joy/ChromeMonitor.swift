@@ -17,8 +17,8 @@ struct ChromeTabSample: Sendable {
         url: String,
         status: ChromeProbeStatus,
         pageInstance: String,
-        promptInstance: String? = nil,
-        responseInstance: String? = nil
+        promptInstance: String?,
+        responseInstance: String?
     ) {
         self.url = url
         self.status = status
@@ -30,7 +30,7 @@ struct ChromeTabSample: Sendable {
 
 enum ChromeMonitorResult: Sendable {
     case success([ChromeTabSample])
-    case unavailable(String)
+    case unavailable
 }
 
 enum ChromeAppleEventsMonitor {
@@ -44,7 +44,7 @@ enum ChromeAppleEventsMonitor {
         set recordSeparator to "|||JOY_RECORD|||"
         set outputText to ""
         set successfulProbeCount to 0
-        set firstProbeError to ""
+        set hadProbeError to false
 
         if application "Google Chrome" is not running then return outputText
 
@@ -58,10 +58,8 @@ enum ChromeAppleEventsMonitor {
                                 set probeValue to execute browserTab javascript probeScript
                                 set outputText to outputText & currentURL & fieldSeparator & probeValue & recordSeparator
                                 set successfulProbeCount to successfulProbeCount + 1
-                            on error errorMessage number errorNumber
-                                if firstProbeError is "" then
-                                    set firstProbeError to (errorNumber as text) & ": " & errorMessage
-                                end if
+                            on error
+                                set hadProbeError to true
                             end try
                         end if
                     end try
@@ -69,8 +67,8 @@ enum ChromeAppleEventsMonitor {
             end repeat
         end tell
 
-        if successfulProbeCount is 0 and firstProbeError is not "" then
-            return "__JOY_ERROR__" & firstProbeError
+        if successfulProbeCount is 0 and hadProbeError then
+            return "__JOY_ERROR__"
         end if
         return outputText
     end run
@@ -150,16 +148,15 @@ enum ChromeAppleEventsMonitor {
     static func sample() -> ChromeMonitorResult {
         let process = Process()
         let standardOutput = Pipe()
-        let standardError = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", script, probeJavaScript]
         process.standardOutput = standardOutput
-        process.standardError = standardError
+        process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()
         } catch {
-            return .unavailable(error.localizedDescription)
+            return .unavailable
         }
 
         let deadline = Date().addingTimeInterval(5)
@@ -168,23 +165,20 @@ enum ChromeAppleEventsMonitor {
         }
         if process.isRunning {
             process.terminate()
-            return .unavailable("Chrome Automation timed out")
+            return .unavailable
         }
         process.waitUntilExit()
 
         let outputData = standardOutput.fileHandleForReading.readDataToEndOfFile()
-        let errorData = standardError.fileHandleForReading.readDataToEndOfFile()
         guard process.terminationStatus == 0 else {
-            let message = String(data: errorData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return .unavailable(message?.isEmpty == false ? message! : "Chrome Automation failed")
+            return .unavailable
         }
 
         guard let output = String(data: outputData, encoding: .utf8) else {
-            return .unavailable("Chrome returned unreadable status data")
+            return .unavailable
         }
         if output.hasPrefix("__JOY_ERROR__") {
-            return .unavailable(String(output.dropFirst("__JOY_ERROR__".count)))
+            return .unavailable
         }
 
         let samples = output
@@ -197,15 +191,13 @@ enum ChromeAppleEventsMonitor {
                 else { return nil }
 
                 let probeFields = fields[1].components(separatedBy: "::JOY::")
-                guard probeFields.count >= 2,
+                guard probeFields.count >= 4,
                       let status = ChromeProbeStatus(rawValue: probeFields[0])
                 else { return nil }
-                let promptInstance = probeFields.count >= 3
-                    && !probeFields[2].isEmpty
+                let promptInstance = !probeFields[2].isEmpty
                     ? probeFields[2]
                     : nil
-                let responseInstance = probeFields.count >= 4
-                    && !probeFields[3].isEmpty
+                let responseInstance = !probeFields[3].isEmpty
                     ? probeFields[3]
                     : nil
 
@@ -222,16 +214,20 @@ enum ChromeAppleEventsMonitor {
     }
 }
 
-struct MonitorObservation: Equatable {
-    var state: ChatState
-    var observedAt: Date
-    var pageInstance: String?
-    var promptInstance: String?
-    var responseInstance: String?
-    var activeRunStartedAt: Date?
-    var pendingTerminalAt: Date?
-    var lastChromeSampleAt: Date?
-    var consecutiveMissingSamples: Int
+struct MonitorObservation {
+    struct RunContinuity {
+        let startedAt: Date
+        let lastSampleAt: Date
+    }
+
+    let state: ChatState
+    let observedAt: Date
+    let pageInstance: String?
+    let promptInstance: String?
+    let responseInstance: String?
+    let runContinuity: RunContinuity?
+    let pendingTerminalAt: Date?
+    let consecutiveMissingSamples: Int
 
     init(
         state: ChatState,
@@ -239,9 +235,8 @@ struct MonitorObservation: Equatable {
         pageInstance: String? = nil,
         promptInstance: String? = nil,
         responseInstance: String? = nil,
-        activeRunStartedAt: Date? = nil,
+        runContinuity: RunContinuity? = nil,
         pendingTerminalAt: Date? = nil,
-        lastChromeSampleAt: Date? = nil,
         consecutiveMissingSamples: Int = 0
     ) {
         self.state = state
@@ -249,9 +244,8 @@ struct MonitorObservation: Equatable {
         self.pageInstance = pageInstance
         self.promptInstance = promptInstance
         self.responseInstance = responseInstance
-        self.activeRunStartedAt = activeRunStartedAt
+        self.runContinuity = runContinuity
         self.pendingTerminalAt = pendingTerminalAt
-        self.lastChromeSampleAt = lastChromeSampleAt
         self.consecutiveMissingSamples = consecutiveMissingSamples
     }
 }
@@ -277,9 +271,9 @@ enum ChatGPTRuntimeReducer {
             : sample.responseInstance ?? previous?.responseInstance
 
         let continuedRunStart = previous.flatMap { observation -> Date? in
-            guard let startedAt = observation.activeRunStartedAt,
-                  let lastSampleAt = observation.lastChromeSampleAt
-            else { return nil }
+            guard let continuity = observation.runContinuity else { return nil }
+            let startedAt = continuity.startedAt
+            let lastSampleAt = continuity.lastSampleAt
             if let previousPrompt = observation.promptInstance,
                let currentPrompt = sample.promptInstance,
                previousPrompt != currentPrompt {
@@ -313,8 +307,10 @@ enum ChatGPTRuntimeReducer {
                 pageInstance: sample.pageInstance,
                 promptInstance: resolvedPromptInstance,
                 responseInstance: resolvedResponseInstance,
-                activeRunStartedAt: startedAt,
-                lastChromeSampleAt: observedAt
+                runContinuity: .init(
+                    startedAt: startedAt,
+                    lastSampleAt: observedAt
+                )
             )
 
         case .failed:
@@ -328,9 +324,11 @@ enum ChatGPTRuntimeReducer {
                         pageInstance: sample.pageInstance,
                         promptInstance: resolvedPromptInstance,
                         responseInstance: resolvedResponseInstance,
-                        activeRunStartedAt: startedAt,
-                        pendingTerminalAt: pendingTerminalAt,
-                        lastChromeSampleAt: observedAt
+                        runContinuity: .init(
+                            startedAt: startedAt,
+                            lastSampleAt: observedAt
+                        ),
+                        pendingTerminalAt: pendingTerminalAt
                     )
                 }
             }
@@ -340,8 +338,7 @@ enum ChatGPTRuntimeReducer {
                 observedAt: observedAt,
                 pageInstance: sample.pageInstance,
                 promptInstance: resolvedPromptInstance,
-                responseInstance: resolvedResponseInstance,
-                lastChromeSampleAt: observedAt
+                responseInstance: resolvedResponseInstance
             )
 
         case .idle:
@@ -355,9 +352,11 @@ enum ChatGPTRuntimeReducer {
                         pageInstance: sample.pageInstance,
                         promptInstance: resolvedPromptInstance,
                         responseInstance: resolvedResponseInstance,
-                        activeRunStartedAt: startedAt,
-                        pendingTerminalAt: pendingTerminalAt,
-                        lastChromeSampleAt: observedAt
+                        runContinuity: .init(
+                            startedAt: startedAt,
+                            lastSampleAt: observedAt
+                        ),
+                        pendingTerminalAt: pendingTerminalAt
                     )
                 }
 
@@ -368,8 +367,7 @@ enum ChatGPTRuntimeReducer {
                     observedAt: observedAt,
                     pageInstance: sample.pageInstance,
                     promptInstance: resolvedPromptInstance,
-                    responseInstance: resolvedResponseInstance,
-                    lastChromeSampleAt: observedAt
+                    responseInstance: resolvedResponseInstance
                 )
             }
 
@@ -380,8 +378,7 @@ enum ChatGPTRuntimeReducer {
                     observedAt: observedAt,
                     pageInstance: sample.pageInstance,
                     promptInstance: resolvedPromptInstance,
-                    responseInstance: resolvedResponseInstance,
-                    lastChromeSampleAt: observedAt
+                    responseInstance: resolvedResponseInstance
                 )
             }
 
@@ -390,26 +387,23 @@ enum ChatGPTRuntimeReducer {
                 observedAt: observedAt,
                 pageInstance: sample.pageInstance,
                 promptInstance: resolvedPromptInstance,
-                responseInstance: resolvedResponseInstance,
-                lastChromeSampleAt: observedAt
+                responseInstance: resolvedResponseInstance
             )
         }
     }
 
     static func interrupted(
-        state: ChatState,
         previous: MonitorObservation?,
         observedAt: Date
     ) -> MonitorObservation {
         return MonitorObservation(
-            state: state,
+            state: .failed,
             observedAt: observedAt,
             pageInstance: previous?.pageInstance,
             promptInstance: previous?.promptInstance,
             responseInstance: previous?.responseInstance,
-            activeRunStartedAt: previous?.activeRunStartedAt,
+            runContinuity: previous?.runContinuity,
             pendingTerminalAt: previous?.pendingTerminalAt,
-            lastChromeSampleAt: previous?.lastChromeSampleAt,
             consecutiveMissingSamples: previous?.consecutiveMissingSamples ?? 0
         )
     }
@@ -427,9 +421,8 @@ enum ChatGPTRuntimeReducer {
                 pageInstance: previous?.pageInstance,
                 promptInstance: previous?.promptInstance,
                 responseInstance: previous?.responseInstance,
-                activeRunStartedAt: startedAt,
+                runContinuity: previous?.runContinuity,
                 pendingTerminalAt: previous?.pendingTerminalAt,
-                lastChromeSampleAt: previous?.lastChromeSampleAt,
                 consecutiveMissingSamples: missingCount
             )
         }
@@ -440,7 +433,6 @@ enum ChatGPTRuntimeReducer {
             pageInstance: previous?.pageInstance,
             promptInstance: previous?.promptInstance,
             responseInstance: previous?.responseInstance,
-            lastChromeSampleAt: previous?.lastChromeSampleAt,
             consecutiveMissingSamples: missingCount
         )
     }

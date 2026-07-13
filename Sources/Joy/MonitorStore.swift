@@ -58,7 +58,7 @@ final class MonitorStore: ObservableObject {
 
     func updateURL(for id: Int, to value: String) {
         guard let index = slots.firstIndex(where: { $0.id == id }) else { return }
-        guard slots[index].url.isEmpty || value.isEmpty else { return }
+        guard slots[index].url.isEmpty else { return }
         if pendingClear?.slotID == id {
             discardClearUndo()
         }
@@ -141,14 +141,11 @@ final class MonitorStore: ObservableObject {
         }
 
         switch target {
-        case .chatGPT(let url):
+        case .chatGPT(let url, _):
             ChromeTabFocus.focus(url: url)
-        case .codex(_, let deepLink):
-            guard let url = URL(string: deepLink) else {
-                NSSound.beep()
-                return
-            }
-            NSWorkspace.shared.open(url)
+        case .codex(let threadID):
+            let deepLink = URL(string: "codex://threads/\(threadID)")!
+            NSWorkspace.shared.open(deepLink)
         }
     }
 
@@ -158,11 +155,11 @@ final class MonitorStore: ObservableObject {
 
         let targets = slots.compactMap { URLNormalizer.target($0.url) }
         let chatURLs = Set(targets.compactMap { target -> String? in
-            guard case .chatGPT(let url) = target else { return nil }
+            guard case .chatGPT(let url, _) = target else { return nil }
             return url
         })
         let codexThreadIDs = Set(targets.compactMap { target -> String? in
-            guard case .codex(let threadID, _) = target else { return nil }
+            guard case .codex(let threadID) = target else { return nil }
             return threadID
         })
 
@@ -206,9 +203,8 @@ final class MonitorStore: ObservableObject {
         switch result {
         case .unavailable:
             for url in configuredURLs {
-                let key = MonitorTarget.chatGPT(url: url).key
+                let key = MonitorTarget.chatGPTKey(url: url)
                 observations[key] = ChatGPTRuntimeReducer.interrupted(
-                    state: .failed,
                     previous: observations[key],
                     observedAt: observedAt
                 )
@@ -216,7 +212,7 @@ final class MonitorStore: ObservableObject {
         case .success(let samples):
             let preferredPageInstances = Dictionary(
                 uniqueKeysWithValues: configuredURLs.compactMap { url in
-                    let key = MonitorTarget.chatGPT(url: url).key
+                    let key = MonitorTarget.chatGPTKey(url: url)
                     return observations[key]?.pageInstance.map { (url, $0) }
                 }
             )
@@ -227,7 +223,7 @@ final class MonitorStore: ObservableObject {
             )
 
             for url in configuredURLs {
-                let key = MonitorTarget.chatGPT(url: url).key
+                let key = MonitorTarget.chatGPTKey(url: url)
                 guard let sample = strongestSample[url] else {
                     observations[key] = ChatGPTRuntimeReducer.missing(
                         previous: observations[key],
@@ -256,10 +252,7 @@ final class MonitorStore: ObservableObject {
             case .failed: state = .failed
             }
 
-            let key = MonitorTarget.codex(
-                threadID: sample.threadID,
-                deepLink: "codex://threads/\(sample.threadID)"
-            ).key
+            let key = MonitorTarget.codexKey(threadID: sample.threadID)
             observations[key] = MonitorObservation(state: state, observedAt: observedAt)
         }
     }
@@ -289,7 +282,9 @@ final class MonitorStore: ObservableObject {
 }
 
 enum ChromeTabFocus {
-    private static let script = #"""
+    // Chrome can restore its previously key window while activation is still
+    // settling. Keep the match's stable window ID and raise it only afterward.
+    static let appleScript = #"""
     on run argv
         set targetURL to item 1 of argv
 
@@ -300,10 +295,15 @@ enum ChromeTabFocus {
                     set tabNumber to tabNumber + 1
                     set currentURL to URL of browserTab as text
                     if currentURL starts with targetURL then
-                        set minimized of browserWindow to false
-                        set active tab index of browserWindow to tabNumber
-                        set index of browserWindow to 1
+                        set targetWindowID to id of browserWindow
+                        set minimized of window id targetWindowID to false
+                        set active tab index of window id targetWindowID to tabNumber
                         activate
+                        repeat 20 times
+                            if frontmost then exit repeat
+                            delay 0.01
+                        end repeat
+                        set index of window id targetWindowID to 1
                         return "found"
                     end if
                 end repeat
@@ -319,7 +319,6 @@ enum ChromeTabFocus {
                 end tell
             end if
             activate
-            return "opened"
         end tell
     end run
     """#
@@ -327,7 +326,7 @@ enum ChromeTabFocus {
     static func focus(url: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script, url]
+        process.arguments = ["-e", appleScript, url]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         do {

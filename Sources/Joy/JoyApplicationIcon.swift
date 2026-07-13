@@ -7,10 +7,6 @@ enum JoyApplicationIcon {
         sharedImage
     }
 
-    static func make(dimension: CGFloat) -> NSImage {
-        build(dimension: dimension)
-    }
-
     static func makeStatusItemIcon(dimension: CGFloat = 20) -> NSImage {
         let image = NSImage(
             size: NSSize(width: dimension, height: dimension),
@@ -63,7 +59,7 @@ enum JoyApplicationIcon {
         return image
     }
 
-    private static func build(dimension: CGFloat) -> NSImage {
+    static func build(dimension: CGFloat) -> NSImage {
         let scale = dimension / 512
         let canvas = NSSize(width: dimension, height: dimension)
         let image = NSImage(size: canvas)

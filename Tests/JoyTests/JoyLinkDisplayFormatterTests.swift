@@ -7,10 +7,6 @@ final class JoyLinkDisplayFormatterTests: XCTestCase {
         let text = "https://chatgpt.com/c/6a55b1c2-9012-43f5-9237-cf773bda4b?model=auto#latest"
 
         XCTAssertEqual(
-            JoyLinkDisplayFormatter.semanticText(for: text),
-            "ChatGPT · 3bda4b"
-        )
-        XCTAssertEqual(
             JoyLinkDisplayFormatter.displayText(for: text) { _ in true },
             "ChatGPT · 3bda4b"
         )
@@ -20,7 +16,7 @@ final class JoyLinkDisplayFormatterTests: XCTestCase {
         let text = "https://chatgpt.com/g/g-example/c/ConversationABCDEF/extra"
 
         XCTAssertEqual(
-            JoyLinkDisplayFormatter.semanticText(for: text),
+            JoyLinkDisplayFormatter.displayText(for: text) { _ in true },
             "ChatGPT · ABCDEF"
         )
     }
@@ -29,16 +25,16 @@ final class JoyLinkDisplayFormatterTests: XCTestCase {
         let text = "codex://threads/019f5956-db8f-7b82-a0ea-701c8AAC6ABB"
 
         XCTAssertEqual(
-            JoyLinkDisplayFormatter.semanticText(for: text),
+            JoyLinkDisplayFormatter.displayText(for: text) { _ in true },
             "Codex · aac6bb"
         )
     }
 
     func testShortIdentifierUsesItsFullValue() {
         XCTAssertEqual(
-            JoyLinkDisplayFormatter.semanticText(
+            JoyLinkDisplayFormatter.displayText(
                 for: "https://chatgpt.com/c/abc"
-            ),
+            ) { _ in true },
             "ChatGPT · abc"
         )
     }

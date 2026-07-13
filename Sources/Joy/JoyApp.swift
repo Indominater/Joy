@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 
 @main
 enum JoyApp {

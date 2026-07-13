@@ -62,7 +62,7 @@ actor CodexSessionMonitor {
             .appendingPathComponent(".codex/sessions", isDirectory: true)
         guard let enumerator = FileManager.default.enumerator(
             at: root,
-            includingPropertiesForKeys: [.isRegularFileKey],
+            includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles]
         ) else { return }
 
@@ -122,7 +122,7 @@ actor CodexSessionMonitor {
         for line in lines.dropLast() {
             applyLifecycleEvent(Data(line), to: &cursor.status)
         }
-        cursor.partialLine = Data(lines.last ?? Data.SubSequence())
+        cursor.partialLine = Data(lines.last!)
     }
 
     private func applyLifecycleEvent(_ line: Data, to status: inout CodexTaskStatus) {

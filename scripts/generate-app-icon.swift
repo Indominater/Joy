@@ -46,7 +46,7 @@ enum GenerateAppIcon {
     }
 
     private static func renderPNG(dimension: CGFloat) throws -> Data {
-        try renderPNG(image: JoyApplicationIcon.make(dimension: dimension))
+        try renderPNG(image: JoyApplicationIcon.build(dimension: dimension))
     }
 
     private static func renderPNG(image: NSImage) throws -> Data {

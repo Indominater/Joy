@@ -106,25 +106,16 @@ enum JoyLinkDisplayFormatter {
         return ellipsis + suffix
     }
 
-    static func semanticText(for fullText: String) -> String? {
-        semanticLabel(for: fullText)?.text
-    }
-
     private static func semanticLabel(for fullText: String) -> SemanticLabel? {
         guard let target = URLNormalizer.target(fullText) else { return nil }
 
         switch target {
-        case .chatGPT(let url):
-            guard let components = URLComponents(string: url) else { return nil }
-            let pathParts = components.path.split(separator: "/")
-            guard let marker = pathParts.firstIndex(of: "c") else { return nil }
-            let identifierIndex = pathParts.index(after: marker)
-            guard identifierIndex < pathParts.endIndex else { return nil }
+        case .chatGPT(_, let conversationID):
             return SemanticLabel(
                 service: "ChatGPT",
-                identifier: String(pathParts[identifierIndex])
+                identifier: conversationID
             )
-        case .codex(let threadID, _):
+        case .codex(let threadID):
             return SemanticLabel(service: "Codex", identifier: threadID)
         }
     }
@@ -528,22 +519,19 @@ final class JoyNativeTextField: NSTextField {
                 return
             }
 
-            switch event.type {
-            case .leftMouseDragged:
+            if event.type == .leftMouseDragged {
                 guard tracker.registerDrag(to: event.locationInWindow) else {
                     return
                 }
                 shouldDrag = true
                 stop.pointee = true
-            case .leftMouseUp:
+            } else {
                 let isClick = tracker.registerMouseUp()
                 if let self {
                     let location = convert(event.locationInWindow, from: nil)
                     shouldOpen = isClick && bounds.contains(location)
                 }
                 stop.pointee = true
-            default:
-                break
             }
         }
 

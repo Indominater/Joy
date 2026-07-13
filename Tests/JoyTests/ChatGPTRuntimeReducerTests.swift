@@ -54,7 +54,6 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
     func testShortProbeInterruptionDoesNotResetActiveRun() {
         let first = transition(.running, page: "page-a", at: start)
         let unavailable = ChatGPTRuntimeReducer.interrupted(
-            state: .failed,
             previous: first,
             observedAt: start.addingTimeInterval(1)
         )
@@ -97,7 +96,6 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
     func testMissingSampleDoesNotResurrectFailedInterruption() {
         let first = transition(.running, page: "page-a", at: start)
         let unavailable = ChatGPTRuntimeReducer.interrupted(
-            state: .failed,
             previous: first,
             observedAt: start.addingTimeInterval(1)
         )
@@ -107,7 +105,7 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
         )
 
         XCTAssertEqual(missing.state, .closed)
-        XCTAssertNil(missing.activeRunStartedAt)
+        XCTAssertNil(missing.runContinuity)
     }
 
     func testSustainedMissingTabSampleBecomesClosed() {
@@ -130,7 +128,7 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
 
         XCTAssertEqual(runningStart(transientMissing.state), start)
         XCTAssertEqual(confirmedMissing.state, .closed)
-        XCTAssertNil(confirmedMissing.activeRunStartedAt)
+        XCTAssertNil(confirmedMissing.runContinuity)
         XCTAssertEqual(runningStart(nextRun.state), nextRunAt)
     }
 
@@ -292,7 +290,6 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
     func testLongProbeInterruptionKeepsKnownResponseStart() {
         let first = transition(.running, page: "page-a", at: start)
         let unavailable = ChatGPTRuntimeReducer.interrupted(
-            state: .failed,
             previous: first,
             observedAt: start.addingTimeInterval(1)
         )
@@ -318,7 +315,6 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
             at: start
         )
         let unavailable = ChatGPTRuntimeReducer.interrupted(
-            state: .failed,
             previous: first,
             observedAt: start.addingTimeInterval(1)
         )
@@ -365,7 +361,7 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
             return XCTFail("Expected a finished runtime")
         }
         XCTAssertEqual(duration, 10)
-        XCTAssertNil(finished.activeRunStartedAt)
+        XCTAssertNil(finished.runContinuity)
     }
 
     func testRunAfterConfirmedFinishGetsNewStart() {
