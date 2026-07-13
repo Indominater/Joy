@@ -10,14 +10,32 @@ final class MonitorStore: ObservableObject {
     private var observations: [String: MonitorObservation] = [:]
     private var timer: Timer?
     private var pollTask: Task<Void, Never>?
+    private var clearUndoExpirationTask: Task<Void, Never>?
     private let codexMonitor = CodexSessionMonitor()
+    private let userDefaults: UserDefaults
+    private let clearUndoLifetime: Duration
+    private let undoClock = ContinuousClock()
+    private var pendingClear: PendingClear?
+
+    private struct PendingClear {
+        let token: UUID
+        let slotID: Int
+        let url: String
+        let expiresAt: ContinuousClock.Instant
+    }
 
     private enum Keys {
         static let slots = "joy.chat-slots"
     }
 
-    init() {
-        if let data = UserDefaults.standard.data(forKey: Keys.slots),
+    init(
+        userDefaults: UserDefaults = .standard,
+        clearUndoLifetime: Duration = .seconds(5)
+    ) {
+        self.userDefaults = userDefaults
+        self.clearUndoLifetime = max(clearUndoLifetime, .zero)
+
+        if let data = userDefaults.data(forKey: Keys.slots),
            let saved = try? JSONDecoder().decode([ChatSlot].self, from: data) {
             let values = Array(saved.prefix(4))
             slots = values + (values.count..<4).map { ChatSlot(id: $0, url: "") }
@@ -34,18 +52,70 @@ final class MonitorStore: ObservableObject {
     deinit {
         timer?.invalidate()
         pollTask?.cancel()
+        clearUndoExpirationTask?.cancel()
     }
 
     func updateURL(for id: Int, to value: String) {
         guard let index = slots.firstIndex(where: { $0.id == id }) else { return }
         guard slots[index].url.isEmpty || value.isEmpty else { return }
+        if pendingClear?.slotID == id {
+            discardClearUndo()
+        }
         slots[index].url = value
         persistSlots()
         refresh()
     }
 
     func clearURL(for id: Int) {
-        updateURL(for: id, to: "")
+        guard let index = slots.firstIndex(where: { $0.id == id }),
+              !slots[index].url.isEmpty
+        else { return }
+
+        discardClearUndo()
+
+        let token = UUID()
+        pendingClear = PendingClear(
+            token: token,
+            slotID: id,
+            url: slots[index].url,
+            expiresAt: undoClock.now.advanced(by: clearUndoLifetime)
+        )
+
+        slots[index].url = ""
+        persistSlots()
+        refresh()
+
+        let lifetime = clearUndoLifetime
+        clearUndoExpirationTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: lifetime)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            self?.expireClearUndo(token: token)
+        }
+    }
+
+    var canUndoLastClear: Bool {
+        guard let pendingClear else { return false }
+        return undoClock.now < pendingClear.expiresAt
+    }
+
+    @discardableResult
+    func undoLastClear() -> Bool {
+        guard let pendingClear else { return false }
+        discardClearUndo()
+
+        guard undoClock.now < pendingClear.expiresAt,
+              let index = slots.firstIndex(where: { $0.id == pendingClear.slotID }),
+              slots[index].url.isEmpty
+        else { return false }
+
+        slots[index].url = pendingClear.url
+        persistSlots()
+        refresh()
+        return true
     }
 
     func state(for slot: ChatSlot) -> ChatState {
@@ -182,8 +252,20 @@ final class MonitorStore: ObservableObject {
 
     private func persistSlots() {
         if let data = try? JSONEncoder().encode(slots) {
-            UserDefaults.standard.set(data, forKey: Keys.slots)
+            userDefaults.set(data, forKey: Keys.slots)
         }
+    }
+
+    private func expireClearUndo(token: UUID) {
+        guard pendingClear?.token == token else { return }
+        pendingClear = nil
+        clearUndoExpirationTask = nil
+    }
+
+    private func discardClearUndo() {
+        clearUndoExpirationTask?.cancel()
+        clearUndoExpirationTask = nil
+        pendingClear = nil
     }
 }
 

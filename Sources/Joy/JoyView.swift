@@ -14,7 +14,12 @@ struct JoyView: View {
                         state: store.state(for: slot),
                         now: store.now,
                         updateURL: { store.updateURL(for: slot.id, to: $0) },
-                        clear: { store.clearURL(for: slot.id) },
+                        clear: {
+                            store.clearURL(for: slot.id)
+                            NSApp.windows
+                                .first(where: { $0 is JoyPanel })?
+                                .makeKey()
+                        },
                         focus: { store.focus(slot) }
                     )
                 }

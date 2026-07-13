@@ -2,12 +2,17 @@ import AppKit
 import SwiftUI
 
 final class JoyPanel: NSPanel {
-    private var ownsCursorRectDisable = false
+    private weak var arrowTrackingView: NSView?
+    private var arrowTrackingArea: NSTrackingArea?
+    var undoLastClear: (() -> Bool)?
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if joyIsUndoShortcut(event), undoLastClear?() == true {
+            return true
+        }
         if joyIsPasteShortcut(event),
            let field = joyURLTextField(for: firstResponder) {
             if field.fullText.isEmpty {
@@ -37,6 +42,16 @@ final class JoyPanel: NSPanel {
         }
     }
 
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        enforceArrowCursor()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        enforceArrowCursor()
+    }
+
     override func resignKey() {
         clearPasteTarget()
         super.resignKey()
@@ -51,7 +66,7 @@ final class JoyPanel: NSPanel {
     }
 
     private func enforceArrowCursor() {
-        installArrowOnlyCursorPolicy()
+        setArrowIfMouseIsInside()
 
         // SwiftUI descendants can update the cursor once more after the current
         // event finishes, so make the arrow the final cursor for the panel.
@@ -61,17 +76,38 @@ final class JoyPanel: NSPanel {
     }
 
     func installArrowOnlyCursorPolicy() {
-        // The links are display-only, so keep an arrow over the whole panel.
-        if !ownsCursorRectDisable {
-            disableCursorRects()
-            ownsCursorRectDisable = true
-        }
-        setArrowIfMouseIsInside()
+        installArrowTrackingAreaIfNeeded()
+        resetCursorRects()
+        enforceArrowCursor()
     }
 
     private func setArrowIfMouseIsInside() {
         guard frame.contains(NSEvent.mouseLocation) else { return }
         NSCursor.arrow.set()
+    }
+
+    private func installArrowTrackingAreaIfNeeded() {
+        guard let contentView, arrowTrackingView !== contentView else { return }
+
+        if let arrowTrackingArea, let arrowTrackingView {
+            arrowTrackingView.removeTrackingArea(arrowTrackingArea)
+        }
+
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [
+                .mouseEnteredAndExited,
+                .mouseMoved,
+                .activeAlways,
+                .inVisibleRect,
+                .enabledDuringMouseDrag
+            ],
+            owner: self,
+            userInfo: nil
+        )
+        contentView.addTrackingArea(area)
+        arrowTrackingView = contentView
+        arrowTrackingArea = area
     }
 
     private func eventTargetsURLTextField(_ event: NSEvent) -> Bool {
@@ -97,8 +133,8 @@ final class JoyPanel: NSPanel {
     }
 
     deinit {
-        if ownsCursorRectDisable {
-            enableCursorRects()
+        if let arrowTrackingArea, let arrowTrackingView {
+            arrowTrackingView.removeTrackingArea(arrowTrackingArea)
         }
     }
 
@@ -110,6 +146,20 @@ final class JoyPanel: NSPanel {
         // Escape should never dismiss the utility panel. Child controls such as
         // the prompt search field still handle Escape before it reaches here.
     }
+}
+
+final class JoyArrowHostingView<Content: View>: NSHostingView<Content> {
+    override func resetCursorRects() {
+        addCursorRect(bounds.intersection(visibleRect), cursor: .arrow)
+    }
+}
+
+func joyIsUndoShortcut(_ event: NSEvent) -> Bool {
+    let modifiers = event.modifierFlags.intersection(
+        .deviceIndependentFlagsMask
+    )
+    return modifiers == .command
+        && event.charactersIgnoringModifiers?.lowercased() == "z"
 }
 
 @MainActor
@@ -159,7 +209,8 @@ final class JoyPanelController: NSWindowController {
             .ignoresCycle
         ]
         panel.animationBehavior = .utilityWindow
-        let hostingView = NSHostingView(rootView: JoyView(store: store))
+        panel.undoLastClear = { store.undoLastClear() }
+        let hostingView = JoyArrowHostingView(rootView: JoyView(store: store))
         hostingView.sizingOptions = []
         panel.contentView = hostingView
         panel.installArrowOnlyCursorPolicy()

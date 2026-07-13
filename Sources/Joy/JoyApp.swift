@@ -13,7 +13,7 @@ enum JoyApp {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var panelController: JoyPanelController?
     private let store = MonitorStore()
     private var monitoringActivity: NSObjectProtocol?
@@ -64,11 +64,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
+        let undoItem = editMenu.addItem(
+            withTitle: "Undo",
+            action: #selector(undoLastClear(_:)),
+            keyEquivalent: "z"
+        )
+        undoItem.target = self
+        editMenu.addItem(.separator())
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
 
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func undoLastClear(_ sender: Any?) {
+        store.undoLastClear()
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(undoLastClear(_:)) {
+            return store.canUndoLastClear
+        }
+        return true
     }
 
     private func configureStatusItem() {

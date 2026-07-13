@@ -94,6 +94,10 @@ enum JoyLinkPaste {
 private final class JoyPasteOnlyFieldEditor: NSTextView {
     weak var ownerField: JoyNativeTextField?
 
+    override func resetCursorRects() {
+        addCursorRect(bounds.intersection(visibleRect), cursor: .arrow)
+    }
+
     override func keyDown(with event: NSEvent) {
         if joyIsPasteShortcut(event) {
             ownerField?.paste(nil)
@@ -237,6 +241,24 @@ final class JoyNativeTextField: NSTextField {
         true
     }
 
+    override func resetCursorRects() {
+        addCursorRect(bounds.intersection(visibleRect), cursor: .arrow)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard copyableText != nil else { return super.menu(for: event) }
+
+        let menu = NSMenu()
+        let copyItem = NSMenuItem(
+            title: "Copy",
+            action: #selector(copyLink(_:)),
+            keyEquivalent: ""
+        )
+        copyItem.target = self
+        menu.addItem(copyItem)
+        return menu
+    }
+
     override func accessibilityValue() -> String? {
         fullText
     }
@@ -255,7 +277,7 @@ final class JoyNativeTextField: NSTextField {
         if fullText.isEmpty {
             "Click this empty row, then press Command-V to paste a link."
         } else {
-            "Link configured. Clear it before pasting another link."
+            "Link configured. Right-click to copy it, or clear it before pasting another link."
         }
     }
 
@@ -319,6 +341,20 @@ final class JoyNativeTextField: NSTextField {
         else { return }
 
         acceptPastedText(pastedText)
+    }
+
+    @objc private func copyLink(_ sender: Any?) {
+        writeFullText(to: .general)
+    }
+
+    func writeFullText(to pasteboard: NSPasteboard) {
+        guard let copyableText else { return }
+        pasteboard.clearContents()
+        pasteboard.setString(copyableText, forType: .string)
+    }
+
+    var copyableText: String? {
+        fullText.isEmpty ? nil : fullText
     }
 
     func acceptPastedText(_ pastedText: String) {
