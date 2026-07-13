@@ -23,11 +23,12 @@ Joy does **not** send prompts or store conversation text.
 Link rows are display-only. Click an empty row, identified by its native
 `#43DDE6` teal caret,
 then paste to fill it. A configured row rejects Paste until its × button is
-used to clear it, and its text area can be dragged to move Joy. Right-click
-anywhere in a configured link field to the left of ×, including its padding, to
-copy the full link. After clearing a link, Undo (Command-Z) can restore it for
-five seconds; only the newest clear is kept, and there is no Redo. Long links
-keep their readable beginning and their final six characters.
+used to clear it. Configured rows use calm labels such as
+`ChatGPT · 3bda4b` and `Codex · 8aac6b`; click a label to open its target, or
+drag it to move Joy. Right-click anywhere in a configured link field to the
+left of ×, including its padding, to copy the full link. After clearing a link,
+that row's status capsule offers Undo for five seconds; Command-Z performs the
+same single Undo. Only the newest clear is kept, and there is no Redo.
 
 The first configured ChatGPT link causes macOS to ask whether Joy may control Google Chrome. Allow it so Joy can inspect response controls and focus matching tabs. Codex monitoring requires no permission prompt.
 

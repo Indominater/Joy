@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 
 private func joyTextFieldTextColor() -> NSColor {
@@ -44,11 +45,43 @@ enum JoyLinkDisplayFormatter {
     static let suffixCount = 6
     static let ellipsis = "\u{2026}"
 
+    private struct SemanticLabel {
+        let service: String
+        let identifier: String
+
+        var text: String {
+            let characters = Array(identifier)
+            let suffix = String(characters.suffix(suffixCount))
+            return "\(service) · \(suffix)"
+        }
+    }
+
     static func displayText(
         for fullText: String,
         fits: (String) -> Bool
     ) -> String {
-        guard !fullText.isEmpty, !fits(fullText) else { return fullText }
+        guard !fullText.isEmpty else { return fullText }
+
+        if let label = semanticLabel(for: fullText) {
+            guard !fits(label.text) else { return label.text }
+
+            let suffix = String(Array(label.identifier).suffix(suffixCount))
+            let prefixCharacters = Array("\(label.service) · ")
+            for candidateCount in stride(
+                from: prefixCharacters.count,
+                through: 0,
+                by: -1
+            ) {
+                let candidate = String(prefixCharacters.prefix(candidateCount))
+                    + suffix
+                if fits(candidate) {
+                    return candidate
+                }
+            }
+            return suffix
+        }
+
+        guard !fits(fullText) else { return fullText }
 
         let characters = Array(fullText)
         let preservedSuffixCount = min(suffixCount, characters.count)
@@ -71,6 +104,62 @@ enum JoyLinkDisplayFormatter {
         }
 
         return ellipsis + suffix
+    }
+
+    static func semanticText(for fullText: String) -> String? {
+        semanticLabel(for: fullText)?.text
+    }
+
+    private static func semanticLabel(for fullText: String) -> SemanticLabel? {
+        guard let target = URLNormalizer.target(fullText) else { return nil }
+
+        switch target {
+        case .chatGPT(let url):
+            guard let components = URLComponents(string: url) else { return nil }
+            let pathParts = components.path.split(separator: "/")
+            guard let marker = pathParts.firstIndex(of: "c") else { return nil }
+            let identifierIndex = pathParts.index(after: marker)
+            guard identifierIndex < pathParts.endIndex else { return nil }
+            return SemanticLabel(
+                service: "ChatGPT",
+                identifier: String(pathParts[identifierIndex])
+            )
+        case .codex(let threadID, _):
+            return SemanticLabel(service: "Codex", identifier: threadID)
+        }
+    }
+}
+
+struct JoyClickDragTracker {
+    static let defaultThreshold: CGFloat = 4
+
+    private let origin: NSPoint
+    private let thresholdSquared: CGFloat
+    private var isFinished = false
+
+    init(
+        origin: NSPoint,
+        threshold: CGFloat = defaultThreshold
+    ) {
+        self.origin = origin
+        thresholdSquared = max(0, threshold) * max(0, threshold)
+    }
+
+    mutating func registerDrag(to location: NSPoint) -> Bool {
+        guard !isFinished else { return false }
+        let deltaX = location.x - origin.x
+        let deltaY = location.y - origin.y
+        guard deltaX * deltaX + deltaY * deltaY >= thresholdSquared else {
+            return false
+        }
+        isFinished = true
+        return true
+    }
+
+    mutating func registerMouseUp() -> Bool {
+        guard !isFinished else { return false }
+        isFinished = true
+        return true
     }
 }
 
@@ -218,6 +307,7 @@ private final class JoyTextFieldCell: NSTextFieldCell {
 
 final class JoyNativeTextField: NSTextField {
     var onPaste: ((String) -> Void)?
+    var onOpen: (() -> Void)?
     private var isExplicitPasteTarget = false
 
     var fullText = "" {
@@ -270,15 +360,29 @@ final class JoyNativeTextField: NSTextField {
     }
 
     override func accessibilityLabel() -> String? {
-        "ChatGPT or Codex link"
+        switch URLNormalizer.target(fullText) {
+        case .chatGPT: "ChatGPT link"
+        case .codex: "Codex link"
+        case nil: "ChatGPT or Codex link"
+        }
     }
 
     override func accessibilityHelp() -> String? {
         if fullText.isEmpty {
             "Click this empty row, then press Command-V to paste a link."
+        } else if URLNormalizer.target(fullText) == nil {
+            "Unsupported link. Clear it before pasting another link."
         } else {
-            "Link configured. Right-click to copy it, or clear it before pasting another link."
+            "Click to open, drag to move Joy, or right-click to copy the full link."
         }
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        guard URLNormalizer.target(fullText) != nil, let onOpen else {
+            return false
+        }
+        onOpen()
+        return true
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -303,7 +407,7 @@ final class JoyNativeTextField: NSTextField {
 
     override func mouseDown(with event: NSEvent) {
         guard fullText.isEmpty else {
-            window?.performDrag(with: event)
+            trackConfiguredLinkGesture(from: event)
             return
         }
 
@@ -402,6 +506,65 @@ final class JoyNativeTextField: NSTextField {
         isEditable = fullText.isEmpty
         isSelectable = fullText.isEmpty
     }
+
+    private func trackConfiguredLinkGesture(from mouseDownEvent: NSEvent) {
+        guard let window else { return }
+
+        var tracker = JoyClickDragTracker(origin: mouseDownEvent.locationInWindow)
+        let canOpen = URLNormalizer.target(fullText) != nil
+        var shouldDrag = false
+        var shouldOpen = false
+        if canOpen {
+            setConfiguredLinkPressed(true)
+        }
+
+        window.trackEvents(
+            matching: [.leftMouseDragged, .leftMouseUp],
+            timeout: NSEvent.foreverDuration,
+            mode: .eventTracking
+        ) { [weak self] event, stop in
+            guard let event else {
+                stop.pointee = true
+                return
+            }
+
+            switch event.type {
+            case .leftMouseDragged:
+                guard tracker.registerDrag(to: event.locationInWindow) else {
+                    return
+                }
+                shouldDrag = true
+                stop.pointee = true
+            case .leftMouseUp:
+                let isClick = tracker.registerMouseUp()
+                if let self {
+                    let location = convert(event.locationInWindow, from: nil)
+                    shouldOpen = isClick && bounds.contains(location)
+                }
+                stop.pointee = true
+            default:
+                break
+            }
+        }
+
+        if canOpen {
+            setConfiguredLinkPressed(false)
+        }
+        if shouldDrag {
+            window.performDrag(with: mouseDownEvent)
+            return
+        }
+        guard shouldOpen, canOpen else { return }
+        onOpen?()
+    }
+
+    private func setConfiguredLinkPressed(_ isPressed: Bool) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = isPressed ? 0.07 : 0.11
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            animator().alphaValue = isPressed ? 0.72 : 1
+        }
+    }
 }
 
 func joyURLTextField(for responder: NSResponder?) -> JoyNativeTextField? {
@@ -419,9 +582,10 @@ func joyURLTextField(for responder: NSResponder?) -> JoyNativeTextField? {
 struct JoyTextField: NSViewRepresentable {
     let text: String
     let onPaste: (String) -> Void
+    let onOpen: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onPaste: onPaste)
+        Coordinator(onPaste: onPaste, onOpen: onOpen)
     }
 
     func makeNSView(context: Context) -> JoyNativeTextField {
@@ -444,13 +608,16 @@ struct JoyTextField: NSViewRepresentable {
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         field.onPaste = context.coordinator.handlePaste
+        field.onOpen = context.coordinator.handleOpen
         field.fullText = text
         return field
     }
 
     func updateNSView(_ field: JoyNativeTextField, context: Context) {
         context.coordinator.onPaste = onPaste
+        context.coordinator.onOpen = onOpen
         field.onPaste = context.coordinator.handlePaste
+        field.onOpen = context.coordinator.handleOpen
         field.fullText = text
         field.updateDisplayedText()
     }
@@ -474,13 +641,22 @@ struct JoyTextField: NSViewRepresentable {
 
     final class Coordinator {
         var onPaste: (String) -> Void
+        var onOpen: () -> Void
 
-        init(onPaste: @escaping (String) -> Void) {
+        init(
+            onPaste: @escaping (String) -> Void,
+            onOpen: @escaping () -> Void
+        ) {
             self.onPaste = onPaste
+            self.onOpen = onOpen
         }
 
         func handlePaste(_ text: String) {
             onPaste(text)
+        }
+
+        func handleOpen() {
+            onOpen()
         }
     }
 }

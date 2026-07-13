@@ -46,6 +46,26 @@ final class JoyCursorPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testRowHoverInstallsActiveAlwaysTracking() throws {
+        let hoverView = JoyActiveHoverView(
+            frame: NSRect(x: 0, y: 0, width: 340, height: 42)
+        )
+        hoverView.updateTrackingAreas()
+
+        let ownedAreas = hoverView.trackingAreas.filter {
+            $0.owner === hoverView
+        }
+        let area = try XCTUnwrap(ownedAreas.first)
+        XCTAssertEqual(ownedAreas.count, 1)
+        XCTAssertTrue(area.options.contains(.mouseEnteredAndExited))
+        XCTAssertTrue(area.options.contains(.activeAlways))
+        XCTAssertTrue(area.options.contains(.inVisibleRect))
+        XCTAssertTrue(area.options.contains(.enabledDuringMouseDrag))
+        XCTAssertFalse(area.options.contains(.cursorUpdate))
+        XCTAssertNil(hoverView.hitTest(NSPoint(x: 20, y: 20)))
+    }
+
+    @MainActor
     private func makePanel() -> JoyPanel {
         JoyPanel(
             contentRect: NSRect(x: 0, y: 0, width: 360, height: 212),

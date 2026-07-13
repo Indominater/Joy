@@ -3,6 +3,56 @@ import XCTest
 @testable import Joy
 
 final class JoyLinkDisplayFormatterTests: XCTestCase {
+    func testChatGPTLinkUsesServiceAndConversationSuffix() {
+        let text = "https://chatgpt.com/c/6a55b1c2-9012-43f5-9237-cf773bda4b?model=auto#latest"
+
+        XCTAssertEqual(
+            JoyLinkDisplayFormatter.semanticText(for: text),
+            "ChatGPT · 3bda4b"
+        )
+        XCTAssertEqual(
+            JoyLinkDisplayFormatter.displayText(for: text) { _ in true },
+            "ChatGPT · 3bda4b"
+        )
+    }
+
+    func testChatGPTLabelUsesIdentifierImmediatelyAfterConversationMarker() {
+        let text = "https://chatgpt.com/g/g-example/c/ConversationABCDEF/extra"
+
+        XCTAssertEqual(
+            JoyLinkDisplayFormatter.semanticText(for: text),
+            "ChatGPT · ABCDEF"
+        )
+    }
+
+    func testCodexLinkUsesNormalizedThreadSuffix() {
+        let text = "codex://threads/019f5956-db8f-7b82-a0ea-701c8AAC6ABB"
+
+        XCTAssertEqual(
+            JoyLinkDisplayFormatter.semanticText(for: text),
+            "Codex · aac6bb"
+        )
+    }
+
+    func testShortIdentifierUsesItsFullValue() {
+        XCTAssertEqual(
+            JoyLinkDisplayFormatter.semanticText(
+                for: "https://chatgpt.com/c/abc"
+            ),
+            "ChatGPT · abc"
+        )
+    }
+
+    func testNarrowSemanticLabelStillPreservesIdentifierSuffix() {
+        let text = "https://chatgpt.com/c/6a55b1c2-9012-43f5-9237-cf773bda4b"
+
+        let result = JoyLinkDisplayFormatter.displayText(for: text) {
+            $0.count <= 7
+        }
+
+        XCTAssertEqual(result, "3bda4b")
+    }
+
     func testReturnsFullTextWhenItFits() {
         let text = "codex://threads/019f5956-db8f-7b82-a0ea"
 
@@ -123,12 +173,13 @@ final class JoyLinkContextMenuTests: XCTestCase {
 
     func testCopyWritesFullLinkInsteadOfShortenedDisplayText() {
         let field = JoyNativeTextField(
-            frame: NSRect(x: 0, y: 0, width: 80, height: 42)
+            frame: NSRect(x: 0, y: 0, width: 200, height: 42)
         )
         let fullLink = "https://chatgpt.com/c/1234567890-abcdefghijklmnopqrstuvwxyz"
         field.fullText = fullLink
         field.updateDisplayedText()
-        XCTAssertNotEqual(field.stringValue, fullLink)
+        XCTAssertEqual(field.stringValue, "ChatGPT · uvwxyz")
+        XCTAssertEqual(field.toolTip, fullLink)
 
         XCTAssertEqual(field.copyableText, fullLink)
     }
@@ -155,5 +206,37 @@ final class JoyLinkContextMenuTests: XCTestCase {
                 pressure: 0
             )
         )
+    }
+}
+
+final class JoyClickDragTrackerTests: XCTestCase {
+    func testMouseUpWithoutMeaningfulMovementRemainsAClick() {
+        var tracker = JoyClickDragTracker(origin: NSPoint(x: 10, y: 10))
+
+        XCTAssertFalse(tracker.registerDrag(to: NSPoint(x: 12, y: 12)))
+        XCTAssertTrue(tracker.registerMouseUp())
+        XCTAssertFalse(tracker.registerMouseUp())
+    }
+
+    func testCrossingThresholdBeginsOnlyOneDragAndCancelsClick() {
+        var tracker = JoyClickDragTracker(origin: .zero)
+
+        XCTAssertTrue(tracker.registerDrag(to: NSPoint(x: 4, y: 0)))
+        XCTAssertFalse(tracker.registerDrag(to: NSPoint(x: 20, y: 0)))
+        XCTAssertFalse(tracker.registerMouseUp())
+    }
+
+    func testAccessibilityPressUsesConfiguredLinkOpenAction() {
+        let field = JoyNativeTextField(frame: .zero)
+        var openCount = 0
+        field.onOpen = { openCount += 1 }
+
+        field.fullText = "https://chatgpt.com/c/conversation"
+        XCTAssertTrue(field.accessibilityPerformPress())
+        XCTAssertEqual(openCount, 1)
+
+        field.fullText = "unsupported"
+        XCTAssertFalse(field.accessibilityPerformPress())
+        XCTAssertEqual(openCount, 1)
     }
 }

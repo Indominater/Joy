@@ -6,6 +6,7 @@ import Foundation
 final class MonitorStore: ObservableObject {
     @Published var slots: [ChatSlot]
     @Published private(set) var now = Date()
+    @Published private(set) var undoableClearSlotID: Int?
 
     private var observations: [String: MonitorObservation] = [:]
     private var timer: Timer?
@@ -74,12 +75,12 @@ final class MonitorStore: ObservableObject {
         discardClearUndo()
 
         let token = UUID()
-        pendingClear = PendingClear(
+        setPendingClear(PendingClear(
             token: token,
             slotID: id,
             url: slots[index].url,
             expiresAt: undoClock.now.advanced(by: clearUndoLifetime)
-        )
+        ))
 
         slots[index].url = ""
         persistSlots()
@@ -116,6 +117,12 @@ final class MonitorStore: ObservableObject {
         persistSlots()
         refresh()
         return true
+    }
+
+    @discardableResult
+    func undoLastClear(for slotID: Int) -> Bool {
+        guard pendingClear?.slotID == slotID else { return false }
+        return undoLastClear()
     }
 
     func state(for slot: ChatSlot) -> ChatState {
@@ -159,7 +166,14 @@ final class MonitorStore: ObservableObject {
             return threadID
         })
 
+        // Keep the last observation warm during the brief Undo window so a
+        // restored row immediately returns to its previous status instead of
+        // flashing Closed while the next poll starts.
+        let pendingClearKey = pendingClear.flatMap {
+            URLNormalizer.target($0.url)?.key
+        }
         let wantedKeys = Set(targets.map(\.key))
+            .union(pendingClearKey.map { [$0] } ?? [])
         observations = observations.filter { wantedKeys.contains($0.key) }
         guard !chatURLs.isEmpty || !codexThreadIDs.isEmpty else { return }
 
@@ -258,14 +272,19 @@ final class MonitorStore: ObservableObject {
 
     private func expireClearUndo(token: UUID) {
         guard pendingClear?.token == token else { return }
-        pendingClear = nil
+        setPendingClear(nil)
         clearUndoExpirationTask = nil
     }
 
     private func discardClearUndo() {
         clearUndoExpirationTask?.cancel()
         clearUndoExpirationTask = nil
-        pendingClear = nil
+        setPendingClear(nil)
+    }
+
+    private func setPendingClear(_ pendingClear: PendingClear?) {
+        self.pendingClear = pendingClear
+        undoableClearSlotID = pendingClear?.slotID
     }
 }
 
@@ -273,7 +292,6 @@ enum ChromeTabFocus {
     private static let script = #"""
     on run argv
         set targetURL to item 1 of argv
-        if application "Google Chrome" is not running then return "missing"
 
         tell application "Google Chrome"
             repeat with browserWindow in windows
@@ -290,8 +308,19 @@ enum ChromeTabFocus {
                     end if
                 end repeat
             end repeat
+
+            if (count of windows) is 0 then
+                make new window
+                set URL of active tab of front window to targetURL
+            else
+                tell front window
+                    make new tab with properties {URL:targetURL}
+                    set active tab index to (count of tabs)
+                end tell
+            end if
+            activate
+            return "opened"
         end tell
-        return "missing"
     end run
     """#
 

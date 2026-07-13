@@ -162,6 +162,19 @@ func joyIsUndoShortcut(_ event: NSEvent) -> Bool {
         && event.charactersIgnoringModifiers?.lowercased() == "z"
 }
 
+enum JoyPanelLayout {
+    static let frameHeight: CGFloat = 224
+    static let aspectRatio: CGFloat = 3 / 2
+    static let frameSize = NSSize(
+        width: (frameHeight * aspectRatio).rounded(),
+        height: frameHeight
+    )
+    static let contentSize = NSSize(
+        width: frameSize.width - 2,
+        height: 212
+    )
+}
+
 @MainActor
 final class JoyPanelController: NSWindowController {
     init(store: MonitorStore) {
@@ -172,16 +185,10 @@ final class JoyPanelController: NSWindowController {
             .fullSizeContentView,
             .nonactivatingPanel
         ]
-        let goldenRatio = (1 + CGFloat(5).squareRoot()) / 2
-        let goldenHeight: CGFloat = 224
-        let goldenSize = NSSize(
-            width: (goldenHeight * goldenRatio).rounded(),
-            height: goldenHeight
-        )
-        let contentHeight: CGFloat = 212
+        let panelSize = JoyPanelLayout.frameSize
 
         let panel = JoyPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 360, height: contentHeight),
+            contentRect: NSRect(origin: .zero, size: JoyPanelLayout.contentSize),
             styleMask: styleMask,
             backing: .buffered,
             defer: false
@@ -215,19 +222,28 @@ final class JoyPanelController: NSWindowController {
         panel.contentView = hostingView
         panel.installArrowOnlyCursorPolicy()
 
-        var goldenFrame = panel.frame
-        goldenFrame.size = goldenSize
-        panel.setFrame(goldenFrame, display: false)
-        panel.minSize = goldenSize
-        panel.maxSize = goldenSize
+        var compactFrame = panel.frame
+        compactFrame.size = panelSize
+        panel.setFrame(compactFrame, display: false)
+        panel.minSize = panelSize
+        panel.maxSize = panelSize
         panel.standardWindowButton(.zoomButton)?.isEnabled = false
 
-        let compactFrameName = "JoyGoldenFrameV7"
-        if panel.setFrameUsingName(compactFrameName, force: true) {
+        let compactFrameName = "JoyThreeTwoFrameV8"
+        let transitionalFrameName = "JoyFourThreeFrameV8"
+        let legacyFrameName = "JoyGoldenFrameV7"
+        let restoredSavedFrame = panel.setFrameUsingName(
+            compactFrameName,
+            force: true
+        ) || panel.setFrameUsingName(
+            transitionalFrameName,
+            force: true
+        ) || panel.setFrameUsingName(legacyFrameName, force: true)
+        if restoredSavedFrame {
             var restoredFrame = panel.frame
             let topEdge = restoredFrame.maxY
-            restoredFrame.size = goldenSize
-            restoredFrame.origin.y = topEdge - goldenSize.height
+            restoredFrame.size = panelSize
+            restoredFrame.origin.y = topEdge - panelSize.height
             panel.setFrame(restoredFrame, display: false)
         } else {
             panel.center()
