@@ -22,7 +22,7 @@ final class JoyLinkDisplayFormatterTests: XCTestCase {
     }
 
     func testCodexLinkUsesNormalizedThreadSuffix() {
-        let text = "codex://threads/019f5956-db8f-7b82-a0ea-701c8AAC6ABB"
+        let text = "codex://threads/019f5956-db8f-7b82-a0ea-701c8aAAC6BB"
 
         XCTAssertEqual(
             JoyLinkDisplayFormatter.displayText(for: text) { _ in true },
@@ -39,14 +39,62 @@ final class JoyLinkDisplayFormatterTests: XCTestCase {
         )
     }
 
-    func testNarrowSemanticLabelStillPreservesIdentifierSuffix() {
+    func testNarrowSemanticLabelKeepsCompactCenteredDot() {
         let text = "https://chatgpt.com/c/6a55b1c2-9012-43f5-9237-cf773bda4b"
 
         let result = JoyLinkDisplayFormatter.displayText(for: text) {
-            $0.count <= 7
+            $0.count <= 11
         }
 
-        XCTAssertEqual(result, "3bda4b")
+        XCTAssertEqual(result, "Chat\u{00B7}3bda4b")
+    }
+
+    func testNarrowSemanticLabelPrefersSpacedChatAbbreviation() {
+        let text = "https://chatgpt.com/c/6a55b1c2-9012-43f5-9237-cf773bda4b"
+
+        let result = JoyLinkDisplayFormatter.displayText(for: text) {
+            $0.count <= 13
+        }
+
+        XCTAssertEqual(result, "Chat \u{00B7} 3bda4b")
+    }
+
+    func testCodexKeepsFullServiceInCompactForm() {
+        let text = "codex://threads/019f5956-db8f-7b82-a0ea-701c8aaac6bb"
+
+        let result = JoyLinkDisplayFormatter.displayText(for: text) {
+            $0.count <= 12
+        }
+
+        XCTAssertEqual(result, "Codex\u{00B7}aac6bb")
+    }
+
+    func testWidestHexSuffixFitsCompactCodexBudget() {
+        let fallback = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let font = fallback.fontDescriptor.withDesign(.rounded)
+            .flatMap { NSFont(descriptor: $0, size: 12) }
+            ?? fallback
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let text = "codex://threads/019f5956-db8f-7b82-a0ea-701c8a000000"
+
+        let result = JoyLinkDisplayFormatter.displayText(for: text) {
+            ($0 as NSString).size(withAttributes: attributes).width <= 88
+        }
+
+        XCTAssertEqual(result, "Codex\u{00B7}000000")
+    }
+
+    func testServiceShortensBeforeIdentifierSuffix() {
+        let text = "https://chatgpt.com/c/6a55b1c2-9012-43f5-9237-cf773bda4b"
+
+        XCTAssertEqual(
+            JoyLinkDisplayFormatter.displayText(for: text) { $0.count <= 8 },
+            "C\u{00B7}3bda4b"
+        )
+        XCTAssertEqual(
+            JoyLinkDisplayFormatter.displayText(for: text) { $0.count <= 7 },
+            "3bda4b"
+        )
     }
 
     func testReturnsFullTextWhenItFits() {
@@ -106,6 +154,7 @@ final class JoyLinkDisplayFormatterTests: XCTestCase {
             (result as NSString).size(withAttributes: attributes).width,
             budget
         )
+        XCTAssertTrue(result.contains(JoyLinkDisplayFormatter.semanticSeparator))
         XCTAssertEqual(String(result.suffix(6)), String(text.suffix(6)))
     }
 }

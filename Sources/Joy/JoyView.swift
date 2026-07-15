@@ -36,14 +36,7 @@ enum JoyStatusText {
     static func duration(_ value: TimeInterval) -> String {
         guard value.isFinite else { return "—" }
         let seconds = Int(max(0, value).rounded(.down))
-        guard seconds >= 3_600 else {
-            return String(format: "%d:%02d", seconds / 60, seconds % 60)
-        }
-
-        let hours = seconds / 3_600
-        guard hours < 100 else { return "99h+" }
-        let minutes = (seconds % 3_600) / 60
-        return String(format: "%dh%02dm", hours, minutes)
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 }
 
@@ -59,7 +52,7 @@ struct JoyView: View {
         ZStack {
             ArtworkBackground()
 
-            VStack(spacing: 6) {
+            VStack(spacing: 5) {
                 ForEach(store.slots) { slot in
                     ChatRow(
                         slot: slot,
@@ -79,7 +72,9 @@ struct JoyView: View {
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.bottom, 10)
+            // The transparent titlebar supplies the visual top inset; this
+            // compensation balances the first and last rows.
+            .padding(.bottom, 12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .preferredColorScheme(.dark)
@@ -118,7 +113,7 @@ private struct ChatRow: View {
                 alignment: .leading
             )
 
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 if !slot.url.isEmpty {
                     Button(action: clear) {
                         Image(systemName: "xmark.circle.fill")
@@ -338,7 +333,8 @@ private struct StatusPill: View {
                 .minimumScaleFactor(0.82)
                 .foregroundStyle(labelColor)
         }
-        .padding(.horizontal, 8)
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
         .frame(width: 100, height: 28, alignment: .leading)
     }
 

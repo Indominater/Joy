@@ -4,6 +4,7 @@ enum ChromeProbeStatus: String, Sendable {
     case idle
     case running
     case failed
+    case unavailable
 }
 
 struct ChromeTabSample: Sendable {
@@ -60,14 +61,18 @@ enum ChromeAppleEventsMonitor {
                                 set successfulProbeCount to successfulProbeCount + 1
                             on error
                                 set hadProbeError to true
+                                set probeValue to "unavailable::JOY::::JOY::::JOY::"
+                                set outputText to outputText & currentURL & fieldSeparator & probeValue & recordSeparator
                             end try
                         end if
+                    on error
+                        set hadProbeError to true
                     end try
                 end repeat
             end repeat
         end tell
 
-        if successfulProbeCount is 0 and hadProbeError then
+        if successfulProbeCount is 0 and hadProbeError and outputText is "" then
             return "__JOY_ERROR__"
         end if
         return outputText
@@ -92,9 +97,16 @@ enum ChromeAppleEventsMonitor {
       ];
       const errorSelectors = [
         '[data-testid="conversation-turn-error"]',
-        '[data-testid*="error" i]',
-        '[role="alert"]'
+        '[data-testid^="conversation-turn-"] [data-testid*="error" i]',
+        '[data-testid^="conversation-turn-"] [role="alert"]'
       ];
+      const userMessages = Array.from(
+        document.querySelectorAll('[data-message-author-role="user"]')
+      );
+      const latestUserMessage = userMessages[userMessages.length - 1];
+      const latestUserTurn = latestUserMessage?.closest(
+        '[data-testid^="conversation-turn-"]'
+      );
       const runningByText = Array.from(document.querySelectorAll('button')).some((button) =>
         visible(button) && /stop (generating|streaming|response)/i.test(
           `${button.getAttribute('aria-label') || ''} ${button.textContent || ''}`
@@ -102,25 +114,24 @@ enum ChromeAppleEventsMonitor {
       );
       const failed = errorSelectors.some((selector) =>
         Array.from(document.querySelectorAll(selector)).some((element) =>
-          visible(element) && /(error|failed|went wrong|network)/i.test(element.textContent || '')
+          visible(element)
+            && (!latestUserMessage || Boolean(
+              latestUserMessage.compareDocumentPosition(element)
+                & Node.DOCUMENT_POSITION_FOLLOWING
+            ))
+            && /(error|failed|went wrong|network)/i.test(element.textContent || '')
         )
       );
       const status = visibleMatch(runningSelectors) || runningByText
         ? "running"
         : failed ? "failed" : "idle";
-      const userMessages = Array.from(
-        document.querySelectorAll('[data-message-author-role="user"]')
-      );
-      // Attribute-only identities stay stable across DOM rerenders without
-      // inspecting either the prompt or response text.
-      const latestUserMessage = userMessages[userMessages.length - 1];
-      const latestUserTurn = latestUserMessage?.closest(
-        '[data-testid^="conversation-turn-"]'
-      );
-      const promptInstance = latestUserMessage?.getAttribute('data-message-id')
-        || latestUserTurn?.getAttribute('data-turn-id')
-        || latestUserTurn?.getAttribute('data-testid')
-        || "";
+      // Attribute-only identities avoid inspecting either prompt or response
+      // text. The user turn slot is the hard new-prompt boundary; assistant
+      // message IDs are only continuity evidence because phases can replace them.
+      const promptTurnSlot = latestUserTurn?.getAttribute('data-testid') || "";
+      const promptInstance = promptTurnSlot
+        ? `turn-slot:${promptTurnSlot}`
+        : "";
       const assistantMessages = Array.from(
         document.querySelectorAll('[data-message-author-role="assistant"]')
       ).filter(visible);
@@ -130,14 +141,11 @@ enum ChromeAppleEventsMonitor {
           latestUserMessage.compareDocumentPosition(latestAssistantMessage)
             & Node.DOCUMENT_POSITION_FOLLOWING
         );
-      const latestAssistantTurn = assistantFollowsPrompt
-        ? latestAssistantMessage.closest('[data-testid^="conversation-turn-"]')
-        : null;
-      const responseInstance = assistantFollowsPrompt
-        ? latestAssistantMessage.getAttribute('data-message-id')
-          || latestAssistantTurn?.getAttribute('data-turn-id')
-          || latestAssistantTurn?.getAttribute('data-testid')
-          || ""
+      const responseMessageInstance = assistantFollowsPrompt
+        ? latestAssistantMessage.getAttribute('data-message-id') || ""
+        : "";
+      const responseInstance = responseMessageInstance
+        ? `message:${responseMessageInstance}`
         : "";
       return `${status}::JOY::${Math.round(
         performance.timeOrigin || Date.now()
@@ -181,7 +189,11 @@ enum ChromeAppleEventsMonitor {
             return .unavailable
         }
 
-        let samples = output
+        return .success(parseSamples(output))
+    }
+
+    static func parseSamples(_ output: String) -> [ChromeTabSample] {
+        output
             .components(separatedBy: recordSeparator)
             .compactMap { record -> ChromeTabSample? in
                 guard !record.isEmpty else { return nil }
@@ -209,8 +221,6 @@ enum ChromeAppleEventsMonitor {
                     responseInstance: responseInstance
                 )
             }
-
-        return .success(samples)
     }
 }
 
@@ -218,6 +228,17 @@ struct MonitorObservation {
     struct RunContinuity {
         let startedAt: Date
         let lastSampleAt: Date
+        let recoverableUntil: Date?
+
+        init(
+            startedAt: Date,
+            lastSampleAt: Date,
+            recoverableUntil: Date? = nil
+        ) {
+            self.startedAt = startedAt
+            self.lastSampleAt = lastSampleAt
+            self.recoverableUntil = recoverableUntil
+        }
     }
 
     let state: ChatState
@@ -251,8 +272,8 @@ struct MonitorObservation {
 }
 
 enum ChatGPTRuntimeReducer {
-    // ChatGPT briefly swaps controls between response phases. Require a stable
-    // terminal signal before clearing the run epoch used by the live timer.
+    // ChatGPT swaps controls and assistant nodes between response phases.
+    // Debounce terminal signals and retain a bounded continuity lease.
     static let terminalConfirmationDelay: TimeInterval = 2
     static let continuityGrace: TimeInterval = 8
 
@@ -264,6 +285,9 @@ enum ChatGPTRuntimeReducer {
         let promptChanged = previous?.promptInstance != nil
             && sample.promptInstance != nil
             && previous?.promptInstance != sample.promptInstance
+        let responseChanged = previous?.responseInstance != nil
+            && sample.responseInstance != nil
+            && previous?.responseInstance != sample.responseInstance
         let resolvedPromptInstance = sample.promptInstance
             ?? previous?.promptInstance
         let resolvedResponseInstance = promptChanged
@@ -274,24 +298,26 @@ enum ChatGPTRuntimeReducer {
             guard let continuity = observation.runContinuity else { return nil }
             let startedAt = continuity.startedAt
             let lastSampleAt = continuity.lastSampleAt
-            if let previousPrompt = observation.promptInstance,
-               let currentPrompt = sample.promptInstance,
-               previousPrompt != currentPrompt {
-                return nil
+            if let recoverableUntil = continuity.recoverableUntil {
+                guard sample.status == .running else { return nil }
+                // A response phase can mount a new assistant message after a
+                // false terminal signal. Within the recovery lease, only a new
+                // prompt is a definitive boundary; leaf response IDs may churn.
+                let hasExactResponseIdentity = observation.responseInstance?.hasPrefix(
+                    "message:"
+                ) == true && observation.responseInstance == sample.responseInstance
+                if observedAt > recoverableUntil,
+                   !hasExactResponseIdentity {
+                    return nil
+                }
             }
-            if let previousResponse = observation.responseInstance,
-               let currentResponse = sample.responseInstance,
-               previousResponse != currentResponse {
-                return nil
-            }
+            if promptChanged { return nil }
 
             let hasExactIdentity = observation.promptInstance != nil
                 && observation.responseInstance != nil
                 && observation.promptInstance == sample.promptInstance
                 && observation.responseInstance == sample.responseInstance
-            let isRecoveringToleratedMiss = observation.consecutiveMissingSamples == 1
-                && observation.state == .running(startedAt: startedAt)
-            if !hasExactIdentity, !isRecoveringToleratedMiss,
+            if !hasExactIdentity,
                observedAt.timeIntervalSince(lastSampleAt) > continuityGrace {
                 return nil
             }
@@ -299,8 +325,23 @@ enum ChatGPTRuntimeReducer {
         }
 
         switch sample.status {
+        case .unavailable:
+            return interrupted(previous: previous, observedAt: observedAt)
+
         case .running:
             let startedAt = continuedRunStart ?? observedAt
+            let retainedRecoveryDeadline = previous?.runContinuity.flatMap {
+                continuity -> Date? in
+                guard continuedRunStart != nil,
+                      !promptChanged,
+                      let recoverableUntil = continuity.recoverableUntil,
+                      observedAt <= recoverableUntil,
+                      previous?.responseInstance != nil,
+                      previous?.responseInstance != sample.responseInstance,
+                      !responseChanged
+                else { return nil }
+                return recoverableUntil
+            }
             return MonitorObservation(
                 state: .running(startedAt: startedAt),
                 observedAt: observedAt,
@@ -309,7 +350,8 @@ enum ChatGPTRuntimeReducer {
                 responseInstance: resolvedResponseInstance,
                 runContinuity: .init(
                     startedAt: startedAt,
-                    lastSampleAt: observedAt
+                    lastSampleAt: observedAt,
+                    recoverableUntil: retainedRecoveryDeadline
                 )
             )
 
@@ -367,18 +409,26 @@ enum ChatGPTRuntimeReducer {
                     observedAt: observedAt,
                     pageInstance: sample.pageInstance,
                     promptInstance: resolvedPromptInstance,
-                    responseInstance: resolvedResponseInstance
+                    responseInstance: resolvedResponseInstance,
+                    runContinuity: .init(
+                        startedAt: startedAt,
+                        lastSampleAt: observedAt,
+                        recoverableUntil: observedAt.addingTimeInterval(
+                            continuityGrace
+                        )
+                    )
                 )
             }
 
-            if previous?.pageInstance == sample.pageInstance,
+            if !promptChanged,
                case .finished(let duration) = previous?.state {
                 return MonitorObservation(
                     state: .finished(duration: duration),
                     observedAt: observedAt,
                     pageInstance: sample.pageInstance,
-                    promptInstance: resolvedPromptInstance,
-                    responseInstance: resolvedResponseInstance
+                    promptInstance: previous?.promptInstance ?? sample.promptInstance,
+                    responseInstance: previous?.responseInstance ?? sample.responseInstance,
+                    runContinuity: previous?.runContinuity
                 )
             }
 
@@ -413,7 +463,17 @@ enum ChatGPTRuntimeReducer {
         observedAt: Date
     ) -> MonitorObservation {
         let missingCount = (previous?.consecutiveMissingSamples ?? 0) + 1
-        if missingCount == 1,
+        let retainedContinuity = previous?.runContinuity.flatMap { continuity in
+            if let recoverableUntil = continuity.recoverableUntil {
+                return observedAt <= recoverableUntil ? continuity : nil
+            }
+            if observedAt.timeIntervalSince(continuity.lastSampleAt) <= continuityGrace {
+                return continuity
+            }
+            return nil
+        }
+
+        if let retainedContinuity,
            case .running(let startedAt) = previous?.state {
             return MonitorObservation(
                 state: .running(startedAt: startedAt),
@@ -421,7 +481,7 @@ enum ChatGPTRuntimeReducer {
                 pageInstance: previous?.pageInstance,
                 promptInstance: previous?.promptInstance,
                 responseInstance: previous?.responseInstance,
-                runContinuity: previous?.runContinuity,
+                runContinuity: retainedContinuity,
                 pendingTerminalAt: previous?.pendingTerminalAt,
                 consecutiveMissingSamples: missingCount
             )
@@ -433,6 +493,8 @@ enum ChatGPTRuntimeReducer {
             pageInstance: previous?.pageInstance,
             promptInstance: previous?.promptInstance,
             responseInstance: previous?.responseInstance,
+            runContinuity: retainedContinuity,
+            pendingTerminalAt: previous?.pendingTerminalAt,
             consecutiveMissingSamples: missingCount
         )
     }
@@ -452,7 +514,18 @@ enum ChatGPTRuntimeReducer {
 
             let currentPriority = priority(current.status)
             let samplePriority = priority(sample.status)
-            if samplePriority > currentPriority {
+            let currentIsPreferred = current.pageInstance
+                == preferredPageInstances[sample.url]
+            let sampleIsPreferred = sample.pageInstance
+                == preferredPageInstances[sample.url]
+            let canUsePreferredPage = current.status != .running
+                && sample.status != .running
+
+            if canUsePreferredPage, currentIsPreferred != sampleIsPreferred {
+                if sampleIsPreferred {
+                    strongest[sample.url] = sample
+                }
+            } else if samplePriority > currentPriority {
                 strongest[sample.url] = sample
             } else if samplePriority == currentPriority,
                       current.pageInstance != preferredPageInstances[sample.url],
@@ -466,7 +539,8 @@ enum ChatGPTRuntimeReducer {
 
     private static func priority(_ status: ChromeProbeStatus) -> Int {
         switch status {
-        case .running: 3
+        case .running: 4
+        case .unavailable: 3
         case .failed: 2
         case .idle: 1
         }

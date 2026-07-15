@@ -29,6 +29,8 @@ final class MonitorStore: ObservableObject {
         static let slots = "joy.chat-slots"
     }
 
+    private static let slotCount = 3
+
     init(
         userDefaults: UserDefaults = .standard,
         clearUndoLifetime: Duration = .seconds(5)
@@ -38,10 +40,12 @@ final class MonitorStore: ObservableObject {
 
         if let data = userDefaults.data(forKey: Keys.slots),
            let saved = try? JSONDecoder().decode([ChatSlot].self, from: data) {
-            let values = Array(saved.prefix(4))
-            slots = values + (values.count..<4).map { ChatSlot(id: $0, url: "") }
+            let values = Array(saved.prefix(Self.slotCount))
+            slots = values + (values.count..<Self.slotCount).map {
+                ChatSlot(id: $0, url: "")
+            }
         } else {
-            slots = (0..<4).map { ChatSlot(id: $0, url: "") }
+            slots = (0..<Self.slotCount).map { ChatSlot(id: $0, url: "") }
         }
 
         refresh()

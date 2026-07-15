@@ -6,7 +6,7 @@ enum JoyApp {
         let application = NSApplication.shared
         let delegate = AppDelegate()
         application.delegate = delegate
-        application.setActivationPolicy(.accessory)
+        application.setActivationPolicy(.regular)
         application.run()
     }
 }
@@ -19,7 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var statusItem: NSStatusItem?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(.regular)
         NSApp.applicationIconImage = JoyApplicationIcon.make()
     }
 

@@ -163,7 +163,7 @@ func joyIsUndoShortcut(_ event: NSEvent) -> Bool {
 }
 
 enum JoyPanelLayout {
-    static let frameHeight: CGFloat = 224
+    static let frameHeight: CGFloat = 176
     static let aspectRatio: CGFloat = 3 / 2
     static let frameSize = NSSize(
         width: (frameHeight * aspectRatio).rounded(),
@@ -171,7 +171,7 @@ enum JoyPanelLayout {
     )
     static let contentSize = NSSize(
         width: frameSize.width - 2,
-        height: 212
+        height: frameSize.height - 12
     )
 }
 
@@ -229,11 +229,15 @@ final class JoyPanelController: NSWindowController {
         panel.maxSize = panelSize
         panel.standardWindowButton(.zoomButton)?.isEnabled = false
 
-        let compactFrameName = "JoyThreeTwoFrameV8"
+        let compactFrameName = "JoyThreeRowThreeTwoFrameV9"
+        let previousCompactFrameName = "JoyThreeTwoFrameV8"
         let transitionalFrameName = "JoyFourThreeFrameV8"
         let legacyFrameName = "JoyGoldenFrameV7"
         let restoredSavedFrame = panel.setFrameUsingName(
             compactFrameName,
+            force: true
+        ) || panel.setFrameUsingName(
+            previousCompactFrameName,
             force: true
         ) || panel.setFrameUsingName(
             transitionalFrameName,

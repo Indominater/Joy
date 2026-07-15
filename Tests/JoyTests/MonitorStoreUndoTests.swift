@@ -5,6 +5,13 @@ import XCTest
 
 final class MonitorStoreUndoTests: XCTestCase {
     @MainActor
+    func testStoreProvidesThreeRows() {
+        withStore { store in
+            XCTAssertEqual(store.slots.map(\.id), [0, 1, 2])
+        }
+    }
+
+    @MainActor
     func testUndoRestoresOnlyNewestClearAndCannotRedo() {
         withStore { store in
             store.slots[0].url = "first-link"

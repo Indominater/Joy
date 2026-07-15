@@ -1,6 +1,6 @@
 # Joy
 
-Joy is a compact, always-on macOS panel for monitoring up to four existing ChatGPT conversations and Codex tasks. It is a single app: there is no browser extension, native-messaging host, helper executable, account connection, or API key.
+Joy is a compact, always-on macOS panel for monitoring up to three existing ChatGPT conversations and Codex tasks. It is a single app: there is no browser extension, native-messaging host, helper executable, account connection, or API key.
 
 Joy does **not** send prompts or store conversation text.
 
@@ -16,7 +16,7 @@ Joy does **not** send prompts or store conversation text.
 1. Run `./scripts/build-app.sh` from this folder.
 2. Quit any older copy of Joy, move `build/Joy.app` to `/Applications`, and open it.
 3. In Chrome, enable **View → Developer → Allow JavaScript from Apple Events** once.
-4. Paste up to four supported links into Joy:
+4. Paste up to three supported links into Joy:
    - `https://chatgpt.com/c/...`
    - `codex://threads/...`
 
@@ -54,7 +54,7 @@ Codex completion durations come from Codex's lifecycle event. ChatGPT durations 
 
 Joy uses a nonactivating panel that joins every Space and other apps' fullscreen sets. It stays above normal and fullscreen windows. macOS can still hide overlays on the lock screen, secure system dialogs, and protected fullscreen surfaces.
 
-Joy runs as a menu bar accessory so its panel can join other applications' Spaces without becoming part of their window sets. Closing Joy's window leaves the app available from its menu bar icon. Use **Show Joy** there to restore the panel, or choose **Quit Joy** to stop monitoring.
+Joy appears in the Dock and also keeps a menu bar icon. Its panel independently joins other applications' Spaces without becoming part of their window sets. Closing Joy's window leaves the app available from either location. Click Joy in the Dock or use **Show Joy** from its menu bar icon to restore the panel; choose **Quit Joy** to stop monitoring.
 
 ## Privacy and compatibility
 

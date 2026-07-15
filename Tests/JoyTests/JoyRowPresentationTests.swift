@@ -3,16 +3,21 @@ import XCTest
 @testable import Joy
 
 final class JoyRowPresentationTests: XCTestCase {
-    func testPanelUsesHeightPreservingThreeTwoFootprint() {
-        XCTAssertEqual(JoyPanelLayout.frameSize.height, 224)
-        XCTAssertEqual(JoyPanelLayout.frameSize.width, 336)
-        XCTAssertEqual(JoyPanelLayout.contentSize.height, 212)
+    func testPanelUsesThreeRowThreeTwoFootprint() {
+        XCTAssertEqual(JoyPanelLayout.frameSize.height, 176)
+        XCTAssertEqual(JoyPanelLayout.frameSize.width, 264)
+        XCTAssertEqual(JoyPanelLayout.contentSize.height, 164)
+        XCTAssertEqual(
+            JoyPanelLayout.frameSize.width / JoyPanelLayout.frameSize.height,
+            3 / 2
+        )
     }
 
-    func testStatusDurationsStayCompactInsideFixedCapsule() {
+    func testStatusDurationsAlwaysUseTotalMinutesAndSeconds() {
         XCTAssertEqual(JoyStatusText.duration(59 * 60 + 59), "59:59")
-        XCTAssertEqual(JoyStatusText.duration(2 * 3_600 + 5 * 60), "2h05m")
-        XCTAssertEqual(JoyStatusText.duration(100 * 3_600), "99h+")
+        XCTAssertEqual(JoyStatusText.duration(3_600 + 46 * 60), "106:00")
+        XCTAssertEqual(JoyStatusText.duration(2 * 3_600 + 5 * 60 + 7), "125:07")
+        XCTAssertEqual(JoyStatusText.duration(100 * 3_600), "6000:00")
     }
 
     func testOnlyRunningToFinishedProducesSuccessPulse() {

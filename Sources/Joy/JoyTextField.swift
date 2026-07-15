@@ -44,15 +44,17 @@ func joyIsPasteShortcut(_ event: NSEvent) -> Bool {
 enum JoyLinkDisplayFormatter {
     static let suffixCount = 6
     static let ellipsis = "\u{2026}"
+    static let semanticSeparator = "\u{00B7}"
 
     private struct SemanticLabel {
         let service: String
+        let compactService: String
         let identifier: String
 
         var text: String {
             let characters = Array(identifier)
             let suffix = String(characters.suffix(suffixCount))
-            return "\(service) · \(suffix)"
+            return "\(service) \(semanticSeparator) \(suffix)"
         }
     }
 
@@ -66,13 +68,26 @@ enum JoyLinkDisplayFormatter {
             guard !fits(label.text) else { return label.text }
 
             let suffix = String(Array(label.identifier).suffix(suffixCount))
-            let prefixCharacters = Array("\(label.service) · ")
+            let spacedCompact = "\(label.compactService) "
+                + semanticSeparator
+                + " \(suffix)"
+            if fits(spacedCompact) {
+                return spacedCompact
+            }
+
+            let compact = label.compactService + semanticSeparator + suffix
+            if fits(compact) {
+                return compact
+            }
+
+            let serviceCharacters = Array(label.compactService)
             for candidateCount in stride(
-                from: prefixCharacters.count,
-                through: 0,
+                from: serviceCharacters.count - 1,
+                through: 1,
                 by: -1
             ) {
-                let candidate = String(prefixCharacters.prefix(candidateCount))
+                let candidate = String(serviceCharacters.prefix(candidateCount))
+                    + semanticSeparator
                     + suffix
                 if fits(candidate) {
                     return candidate
@@ -113,10 +128,15 @@ enum JoyLinkDisplayFormatter {
         case .chatGPT(_, let conversationID):
             return SemanticLabel(
                 service: "ChatGPT",
+                compactService: "Chat",
                 identifier: conversationID
             )
         case .codex(let threadID):
-            return SemanticLabel(service: "Codex", identifier: threadID)
+            return SemanticLabel(
+                service: "Codex",
+                compactService: "Codex",
+                identifier: threadID
+            )
         }
     }
 }
@@ -218,14 +238,14 @@ private final class JoyPasteOnlyFieldEditor: NSTextView {
 }
 
 private final class JoyTextFieldCell: NSTextFieldCell {
-    private let horizontalInset: CGFloat = 12
-    private let trailingInset: CGFloat = 12
+    private let leadingInset: CGFloat = 10
+    private let trailingInset: CGFloat = 6
     private var pasteOnlyFieldEditor: JoyPasteOnlyFieldEditor?
 
     override func drawingRect(forBounds rect: NSRect) -> NSRect {
         var textRect = super.drawingRect(forBounds: rect)
-        textRect.origin.x = rect.minX + horizontalInset
-        textRect.size.width = max(0, rect.width - horizontalInset - trailingInset)
+        textRect.origin.x = rect.minX + leadingInset
+        textRect.size.width = max(0, rect.width - leadingInset - trailingInset)
 
         let textHeight = cellSize(forBounds: textRect).height
         if textHeight < textRect.height {
