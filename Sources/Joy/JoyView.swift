@@ -40,6 +40,14 @@ enum JoyStatusText {
     }
 }
 
+enum JoyRowLayout {
+    static let height: CGFloat = 42
+    static let statusPillWidth: CGFloat = 96
+    static let statusPillHeight: CGFloat = 28
+    static let statusEdgeInset = (height - statusPillHeight) / 2
+    static let accessorySpacing: CGFloat = 4
+}
+
 private struct JoyTerminalPulseTaskID: Equatable {
     let state: ChatState
     let reduceMotion: Bool
@@ -108,12 +116,12 @@ private struct ChatRow: View {
             )
             .frame(
                 maxWidth: .infinity,
-                minHeight: 42,
-                maxHeight: 42,
+                minHeight: JoyRowLayout.height,
+                maxHeight: JoyRowLayout.height,
                 alignment: .leading
             )
 
-            HStack(spacing: 8) {
+            HStack(spacing: JoyRowLayout.accessorySpacing) {
                 if !slot.url.isEmpty {
                     Button(action: clear) {
                         Image(systemName: "xmark.circle.fill")
@@ -122,7 +130,7 @@ private struct ChatRow: View {
                                 Color(hex: 0xEAC5BB)
                                     .opacity(isClearHovered ? 0.96 : 0.70)
                             )
-                            .frame(width: 28, height: 42)
+                            .frame(width: 28, height: JoyRowLayout.height)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(
@@ -146,7 +154,10 @@ private struct ChatRow: View {
                         showsUndo: showsUndo,
                         isHovered: isStatusHovered && isStatusActionEnabled
                     )
-                    .frame(width: 100, height: 42)
+                    .frame(
+                        width: JoyRowLayout.statusPillWidth,
+                        height: JoyRowLayout.height
+                    )
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(
@@ -165,8 +176,8 @@ private struct ChatRow: View {
                 )
             }
         }
-        .padding(.trailing, 6)
-        .frame(height: 42)
+        .padding(.trailing, JoyRowLayout.statusEdgeInset)
+        .frame(height: JoyRowLayout.height)
         .background(
             Color(hex: 0x190811).opacity(0.48),
             in: RoundedRectangle(cornerRadius: 13, style: .continuous)
@@ -302,7 +313,11 @@ private struct StatusPill: View {
                     .transition(.opacity)
             }
         }
-        .frame(width: 100, height: 28, alignment: .leading)
+        .frame(
+            width: JoyRowLayout.statusPillWidth,
+            height: JoyRowLayout.statusPillHeight,
+            alignment: .leading
+        )
         .background(accentColor.opacity(backgroundOpacity), in: Capsule())
         .overlay {
             Capsule().stroke(
@@ -333,9 +348,13 @@ private struct StatusPill: View {
                 .minimumScaleFactor(0.82)
                 .foregroundStyle(labelColor)
         }
-        .padding(.leading, 10)
-        .padding(.trailing, 6)
-        .frame(width: 100, height: 28, alignment: .leading)
+        .padding(.leading, 8)
+        .padding(.trailing, 4)
+        .frame(
+            width: JoyRowLayout.statusPillWidth,
+            height: JoyRowLayout.statusPillHeight,
+            alignment: .leading
+        )
     }
 
     private var icon: String {

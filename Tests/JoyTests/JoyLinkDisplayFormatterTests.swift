@@ -49,17 +49,25 @@ final class JoyLinkDisplayFormatterTests: XCTestCase {
         XCTAssertEqual(result, "Chat\u{00B7}3bda4b")
     }
 
-    func testNarrowSemanticLabelPrefersSpacedChatAbbreviation() {
-        let text = "https://chatgpt.com/c/6a55b1c2-9012-43f5-9237-cf773bda4b"
+    func testCompactChatAndCodexLabelsUseMatchingSpacedDots() {
+        let links = [
+            "https://chatgpt.com/c/6a55b1c2-9012-43f5-9237-cf773bda4b",
+            "codex://threads/019f5956-db8f-7b82-a0ea-701c8aaac6bb"
+        ]
 
-        let result = JoyLinkDisplayFormatter.displayText(for: text) {
-            $0.count <= 13
+        let results = links.map { text in
+            JoyLinkDisplayFormatter.displayText(for: text) {
+                $0.count <= 14
+            }
         }
 
-        XCTAssertEqual(result, "Chat \u{00B7} 3bda4b")
+        XCTAssertEqual(
+            results,
+            ["Chat \u{00B7} 3bda4b", "Codex \u{00B7} aac6bb"]
+        )
     }
 
-    func testCodexKeepsFullServiceInCompactForm() {
+    func testNarrowCodexLabelFallsBackOnlyAfterSpacedFormStopsFitting() {
         let text = "codex://threads/019f5956-db8f-7b82-a0ea-701c8aaac6bb"
 
         let result = JoyLinkDisplayFormatter.displayText(for: text) {
@@ -69,19 +77,34 @@ final class JoyLinkDisplayFormatterTests: XCTestCase {
         XCTAssertEqual(result, "Codex\u{00B7}aac6bb")
     }
 
-    func testWidestHexSuffixFitsCompactCodexBudget() {
+    func testWidestHexSuffixUsesMatchingSpacingAtRowTextBudget() {
         let fallback = NSFont.systemFont(ofSize: 12, weight: .medium)
         let font = fallback.fontDescriptor.withDesign(.rounded)
             .flatMap { NSFont(descriptor: $0, size: 12) }
             ?? fallback
         let attributes: [NSAttributedString.Key: Any] = [.font: font]
-        let text = "codex://threads/019f5956-db8f-7b82-a0ea-701c8a000000"
+        let budget: CGFloat = 95
+        let links = [
+            "https://chatgpt.com/c/6a55b1c2-9012-43f5-9237-cf773b000000",
+            "codex://threads/019f5956-db8f-7b82-a0ea-701c8a000000"
+        ]
 
-        let result = JoyLinkDisplayFormatter.displayText(for: text) {
-            ($0 as NSString).size(withAttributes: attributes).width <= 88
+        let results = links.map { text in
+            JoyLinkDisplayFormatter.displayText(for: text) {
+                ($0 as NSString).size(withAttributes: attributes).width <= budget
+            }
         }
 
-        XCTAssertEqual(result, "Codex\u{00B7}000000")
+        XCTAssertEqual(
+            results,
+            ["Chat \u{00B7} 000000", "Codex \u{00B7} 000000"]
+        )
+        for result in results {
+            XCTAssertLessThanOrEqual(
+                (result as NSString).size(withAttributes: attributes).width,
+                budget
+            )
+        }
     }
 
     func testServiceShortensBeforeIdentifierSuffix() {

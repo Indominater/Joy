@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 @testable import Joy
 
@@ -11,6 +13,15 @@ final class JoyRowPresentationTests: XCTestCase {
             JoyPanelLayout.frameSize.width / JoyPanelLayout.frameSize.height,
             3 / 2
         )
+    }
+
+    func testStatusPillTopAndTrailingMarginsMatch() {
+        let topInset = (
+            JoyRowLayout.height - JoyRowLayout.statusPillHeight
+        ) / 2
+
+        XCTAssertEqual(JoyRowLayout.statusEdgeInset, 7)
+        XCTAssertEqual(JoyRowLayout.statusEdgeInset, topInset)
     }
 
     func testStatusDurationsAlwaysUseTotalMinutesAndSeconds() {
@@ -60,5 +71,51 @@ final class JoyRowPresentationTests: XCTestCase {
                 to: .running(startedAt: startedAt)
             )
         )
+    }
+
+    @MainActor
+    func testConfiguredRowsRenderMatchingSpacedDotsForChatAndCodex() throws {
+        let suiteName = "JoyRowPresentationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let chatLink = "https://chatgpt.com/c/6a55b1c2-9012-43f5-9237-cf773b000000"
+        let codexLink = "codex://threads/019f5956-db8f-7b82-a0ea-701c8a000000"
+        let store = MonitorStore(userDefaults: defaults)
+        store.slots = [
+            ChatSlot(id: 0, url: chatLink),
+            ChatSlot(id: 1, url: codexLink),
+            ChatSlot(id: 2, url: "")
+        ]
+
+        let hostingView = NSHostingView(rootView: JoyView(store: store))
+        hostingView.frame = NSRect(
+            origin: .zero,
+            size: JoyPanelLayout.contentSize
+        )
+        let window = NSWindow(
+            contentRect: hostingView.frame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = hostingView
+        hostingView.layoutSubtreeIfNeeded()
+
+        let displayedTextByLink = Dictionary(
+            uniqueKeysWithValues: descendants(of: hostingView)
+                .compactMap { $0 as? JoyNativeTextField }
+                .filter { !$0.fullText.isEmpty }
+                .map { ($0.fullText, $0.stringValue) }
+        )
+
+        XCTAssertEqual(displayedTextByLink[chatLink], "Chat \u{00B7} 000000")
+        XCTAssertEqual(displayedTextByLink[codexLink], "Codex \u{00B7} 000000")
+        withExtendedLifetime(window) {}
+    }
+
+    @MainActor
+    private func descendants(of view: NSView) -> [NSView] {
+        view.subviews + view.subviews.flatMap(descendants)
     }
 }

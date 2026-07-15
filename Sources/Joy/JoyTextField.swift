@@ -239,7 +239,7 @@ private final class JoyPasteOnlyFieldEditor: NSTextView {
 
 private final class JoyTextFieldCell: NSTextFieldCell {
     private let leadingInset: CGFloat = 10
-    private let trailingInset: CGFloat = 6
+    private let trailingInset: CGFloat = 4
     private var pasteOnlyFieldEditor: JoyPasteOnlyFieldEditor?
 
     override func drawingRect(forBounds rect: NSRect) -> NSRect {
@@ -636,7 +636,10 @@ struct JoyTextField: NSViewRepresentable {
         context: Context
     ) -> CGSize? {
         guard let width = proposal.width else { return nil }
-        return CGSize(width: width, height: proposal.height ?? 42)
+        return CGSize(
+            width: width,
+            height: proposal.height ?? JoyRowLayout.height
+        )
     }
 
     private static let font: NSFont = {
