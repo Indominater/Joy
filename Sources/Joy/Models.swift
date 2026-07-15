@@ -8,6 +8,7 @@ struct ChatSlot: Identifiable, Codable {
 enum ChatState: Equatable {
     case unconfigured
     case invalid
+    case checking
     case closed
     case idle
     case running(startedAt: Date)
@@ -19,8 +20,8 @@ enum MonitorTarget {
     case chatGPT(url: String, conversationID: String)
     case codex(threadID: String)
 
-    static func chatGPTKey(url: String) -> String {
-        "chatgpt:\(url)"
+    static func chatGPTKey(conversationID: String) -> String {
+        "chatgpt:\(conversationID)"
     }
 
     static func codexKey(threadID: String) -> String {
@@ -29,7 +30,8 @@ enum MonitorTarget {
 
     var key: String {
         switch self {
-        case .chatGPT(let url, _): Self.chatGPTKey(url: url)
+        case .chatGPT(_, let conversationID):
+            Self.chatGPTKey(conversationID: conversationID)
         case .codex(let threadID): Self.codexKey(threadID: threadID)
         }
     }

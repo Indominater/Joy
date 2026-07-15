@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import Foundation
 import SwiftUI
 import XCTest
@@ -6,9 +7,9 @@ import XCTest
 
 final class JoyRowPresentationTests: XCTestCase {
     func testPanelUsesThreeRowThreeTwoFootprint() {
-        XCTAssertEqual(JoyPanelLayout.frameSize.height, 176)
-        XCTAssertEqual(JoyPanelLayout.frameSize.width, 264)
-        XCTAssertEqual(JoyPanelLayout.contentSize.height, 164)
+        XCTAssertEqual(JoyPanelLayout.frameSize.height, 184)
+        XCTAssertEqual(JoyPanelLayout.frameSize.width, 276)
+        XCTAssertEqual(JoyPanelLayout.contentSize.height, 172)
         XCTAssertEqual(
             JoyPanelLayout.frameSize.width / JoyPanelLayout.frameSize.height,
             3 / 2
@@ -20,8 +21,43 @@ final class JoyRowPresentationTests: XCTestCase {
             JoyRowLayout.height - JoyRowLayout.statusPillHeight
         ) / 2
 
-        XCTAssertEqual(JoyRowLayout.statusEdgeInset, 7)
+        XCTAssertEqual(JoyRowLayout.statusEdgeInset, 8)
         XCTAssertEqual(JoyRowLayout.statusEdgeInset, topInset)
+        XCTAssertEqual(
+            JoyRowLayout.rowCornerRadius,
+            JoyRowLayout.statusPillHeight / 2
+        )
+    }
+
+    func testTripleDigitStatusTimerFitsAtFullFontSize() throws {
+        let fallback = NSFont.systemFont(
+            ofSize: JoyRowLayout.statusFontSize,
+            weight: .semibold
+        )
+        let roundedDescriptor = fallback.fontDescriptor.withDesign(.rounded)
+            ?? fallback.fontDescriptor
+        let monospacedDescriptor = roundedDescriptor.addingAttributes([
+            .featureSettings: [[
+                NSFontDescriptor.FeatureKey.typeIdentifier:
+                    kNumberSpacingType,
+                NSFontDescriptor.FeatureKey.selectorIdentifier:
+                    kMonospacedNumbersSelector
+            ]]
+        ])
+        let font = try XCTUnwrap(NSFont(
+            descriptor: monospacedDescriptor,
+            size: JoyRowLayout.statusFontSize
+        ))
+        let label = JoyStatusText.label(
+            for: .finished(duration: 999 * 60 + 59),
+            now: Date()
+        )
+        let labelWidth = (label as NSString).size(
+            withAttributes: [.font: font]
+        ).width
+
+        XCTAssertEqual(JoyRowLayout.statusLabelWidth, 79)
+        XCTAssertLessThanOrEqual(labelWidth, JoyRowLayout.statusLabelWidth)
     }
 
     func testStatusDurationsAlwaysUseTotalMinutesAndSeconds() {
@@ -29,6 +65,13 @@ final class JoyRowPresentationTests: XCTestCase {
         XCTAssertEqual(JoyStatusText.duration(3_600 + 46 * 60), "106:00")
         XCTAssertEqual(JoyStatusText.duration(2 * 3_600 + 5 * 60 + 7), "125:07")
         XCTAssertEqual(JoyStatusText.duration(100 * 3_600), "6000:00")
+    }
+
+    func testCheckingStatusUsesNeutralProgressCopy() {
+        XCTAssertEqual(
+            JoyStatusText.label(for: .checking, now: Date()),
+            "Checking"
+        )
     }
 
     func testOnlyRunningToFinishedProducesSuccessPulse() {

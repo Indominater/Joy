@@ -23,6 +23,7 @@ enum JoyStatusText {
         switch state {
         case .unconfigured: "Ready"
         case .invalid: "Invalid"
+        case .checking: "Checking"
         case .closed: "Closed"
         case .idle: "Idle"
         case .running(let startedAt):
@@ -41,11 +42,22 @@ enum JoyStatusText {
 }
 
 enum JoyRowLayout {
-    static let height: CGFloat = 42
-    static let statusPillWidth: CGFloat = 96
+    static let height: CGFloat = 44
+    static let rowSpacing: CGFloat = 6
+    static let rowCornerRadius: CGFloat = 14
+    static let statusPillWidth: CGFloat = 108
     static let statusPillHeight: CGFloat = 28
     static let statusEdgeInset = (height - statusPillHeight) / 2
     static let accessorySpacing: CGFloat = 4
+    static let clearButtonWidth: CGFloat = 28
+    static let statusContentInset: CGFloat = 7
+    static let statusContentSpacing: CGFloat = 5
+    static let statusIconWidth: CGFloat = 10
+    static let statusFontSize: CGFloat = 12
+    static let statusLabelWidth = statusPillWidth
+        - (2 * statusContentInset)
+        - statusIconWidth
+        - statusContentSpacing
 }
 
 private struct JoyTerminalPulseTaskID: Equatable {
@@ -60,7 +72,7 @@ struct JoyView: View {
         ZStack {
             ArtworkBackground()
 
-            VStack(spacing: 5) {
+            VStack(spacing: JoyRowLayout.rowSpacing) {
                 ForEach(store.slots) { slot in
                     ChatRow(
                         slot: slot,
@@ -130,7 +142,10 @@ private struct ChatRow: View {
                                 Color(hex: 0xEAC5BB)
                                     .opacity(isClearHovered ? 0.96 : 0.70)
                             )
-                            .frame(width: 28, height: JoyRowLayout.height)
+                            .frame(
+                                width: JoyRowLayout.clearButtonWidth,
+                                height: JoyRowLayout.height
+                            )
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(
@@ -180,17 +195,26 @@ private struct ChatRow: View {
         .frame(height: JoyRowLayout.height)
         .background(
             Color(hex: 0x190811).opacity(0.48),
-            in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+            in: RoundedRectangle(
+                cornerRadius: JoyRowLayout.rowCornerRadius,
+                style: .continuous
+            )
         )
         .background(
             .ultraThinMaterial.opacity(0.58),
-            in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+            in: RoundedRectangle(
+                cornerRadius: JoyRowLayout.rowCornerRadius,
+                style: .continuous
+            )
         )
         .background {
             JoyActiveHoverRegion(isHovered: $isHovered)
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
+            RoundedRectangle(
+                cornerRadius: JoyRowLayout.rowCornerRadius,
+                style: .continuous
+            )
                 .fill(
                     Color(hex: 0xFFAA80)
                         .opacity(isHovered ? 0.025 : 0)
@@ -198,7 +222,10 @@ private struct ChatRow: View {
                 .allowsHitTesting(false)
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
+            RoundedRectangle(
+                cornerRadius: JoyRowLayout.rowCornerRadius,
+                style: .continuous
+            )
                 .stroke(
                     Color(hex: 0xFFAA80)
                         .opacity(isHovered ? 0.32 : 0.22),
@@ -207,7 +234,10 @@ private struct ChatRow: View {
                 .allowsHitTesting(false)
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
+            RoundedRectangle(
+                cornerRadius: JoyRowLayout.rowCornerRadius,
+                style: .continuous
+            )
                 .stroke(
                     terminalPulseColor.opacity(terminalGlowOpacity),
                     lineWidth: 1.5
@@ -301,7 +331,7 @@ private struct StatusPill: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ZStack(alignment: .leading) {
+        ZStack {
             if showsUndo {
                 content(icon: "arrow.uturn.backward", label: "Undo")
                     .transition(.opacity)
@@ -316,7 +346,7 @@ private struct StatusPill: View {
         .frame(
             width: JoyRowLayout.statusPillWidth,
             height: JoyRowLayout.statusPillHeight,
-            alignment: .leading
+            alignment: .center
         )
         .background(accentColor.opacity(backgroundOpacity), in: Capsule())
         .overlay {
@@ -337,23 +367,29 @@ private struct StatusPill: View {
 
     @ViewBuilder
     private func content(icon: String, label: String) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: JoyRowLayout.statusContentSpacing) {
             Image(systemName: icon)
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(accentColor)
+                .frame(width: JoyRowLayout.statusIconWidth)
             Text(label)
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(
+                    .system(
+                        size: JoyRowLayout.statusFontSize,
+                        weight: .semibold,
+                        design: .rounded
+                    )
+                )
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.82)
                 .foregroundStyle(labelColor)
         }
-        .padding(.leading, 8)
-        .padding(.trailing, 4)
+        .padding(.horizontal, JoyRowLayout.statusContentInset)
         .frame(
             width: JoyRowLayout.statusPillWidth,
             height: JoyRowLayout.statusPillHeight,
-            alignment: .leading
+            alignment: .center
         )
     }
 
@@ -363,6 +399,7 @@ private struct StatusPill: View {
         case .finished: "checkmark"
         case .failed, .invalid: "exclamationmark"
         case .closed: "rectangle.slash"
+        case .checking: "ellipsis"
         case .unconfigured, .idle: "circle"
         }
     }
@@ -376,6 +413,7 @@ private struct StatusPill: View {
         case .finished: Color(hex: 0x78DFAF)
         case .failed, .invalid: Color(hex: 0xFF795F)
         case .closed: Color(hex: 0xC69AA8)
+        case .checking: Color(hex: 0xB9AAB5)
         case .unconfigured, .idle: Color(hex: 0xE9A98F)
         }
     }
@@ -389,6 +427,7 @@ private struct StatusPill: View {
         case .finished: Color(hex: 0xC4F1D8)
         case .failed, .invalid: Color(hex: 0xFFC0B0)
         case .closed: Color(hex: 0xE2C7CF)
+        case .checking: Color(hex: 0xE1D7DC)
         case .unconfigured, .idle: Color(hex: 0xF1D4C7)
         }
     }

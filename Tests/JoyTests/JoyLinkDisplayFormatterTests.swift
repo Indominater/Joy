@@ -3,6 +3,35 @@ import XCTest
 @testable import Joy
 
 final class JoyLinkDisplayFormatterTests: XCTestCase {
+    func testChatGPTMonitorIdentityIgnoresRouteWrapperChanges() throws {
+        let conversationID = "6a234240-1ba8-832c-b452-46ceea131482"
+        let urls = [
+            "https://chatgpt.com/c/\(conversationID)",
+            "https://chatgpt.com/g/g-p-old/c/\(conversationID)",
+            "https://chatgpt.com/g/g-p-new/c/\(conversationID)?model=auto#latest"
+        ]
+        let keys = try urls.map { url in
+            try XCTUnwrap(URLNormalizer.target(url)).key
+        }
+        let differentKey = try XCTUnwrap(URLNormalizer.target(
+            "https://chatgpt.com/c/different-conversation"
+        )).key
+
+        XCTAssertEqual(Set(keys).count, 1)
+        XCTAssertNotEqual(keys[0], differentKey)
+    }
+
+    func testChatGPTMonitorIdentityPreservesConversationIDCase() throws {
+        let uppercaseKey = try XCTUnwrap(URLNormalizer.target(
+            "https://chatgpt.com/c/ConversationABCDEF"
+        )).key
+        let lowercaseKey = try XCTUnwrap(URLNormalizer.target(
+            "https://chatgpt.com/c/conversationabcdef"
+        )).key
+
+        XCTAssertNotEqual(uppercaseKey, lowercaseKey)
+    }
+
     func testChatGPTLinkUsesServiceAndConversationSuffix() {
         let text = "https://chatgpt.com/c/6a55b1c2-9012-43f5-9237-cf773bda4b?model=auto#latest"
 

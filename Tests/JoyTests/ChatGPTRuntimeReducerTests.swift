@@ -234,26 +234,102 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
         XCTAssertEqual(runningStart(resumed.state), resumedAt)
     }
 
-    func testMissingAfterInterruptionRetainsContinuityWithoutResurrectingState() {
+    func testMissingAfterInterruptionDoesNotFlashClosedWithinGrace() {
         let first = transition(.running, page: "page-a", at: start)
-        let unavailable = ChatGPTRuntimeReducer.interrupted(
+        let partialScan = ChatGPTRuntimeReducer.absent(
             previous: first,
-            observedAt: start.addingTimeInterval(1)
+            observedAt: start.addingTimeInterval(1),
+            enumerationIsComplete: false
         )
-        let missing = ChatGPTRuntimeReducer.missing(
-            previous: unavailable,
-            observedAt: start.addingTimeInterval(2)
+        let completeMissing = ChatGPTRuntimeReducer.absent(
+            previous: partialScan,
+            observedAt: start.addingTimeInterval(2),
+            enumerationIsComplete: true
         )
         let resumed = transition(
             .running,
             page: "page-a",
             at: start.addingTimeInterval(3),
-            previous: missing
+            previous: completeMissing
+        )
+
+        XCTAssertEqual(partialScan.state, .failed)
+        XCTAssertEqual(completeMissing.state, .failed)
+        XCTAssertNotNil(completeMissing.runContinuity)
+        XCTAssertEqual(runningStart(resumed.state), start)
+    }
+
+    func testMissingAfterInterruptionBecomesClosedAfterGrace() {
+        let first = transition(.running, page: "page-a", at: start)
+        let partialScan = ChatGPTRuntimeReducer.absent(
+            previous: first,
+            observedAt: start.addingTimeInterval(1),
+            enumerationIsComplete: false
+        )
+        let missing = ChatGPTRuntimeReducer.absent(
+            previous: partialScan,
+            observedAt: start.addingTimeInterval(
+                ChatGPTRuntimeReducer.continuityGrace + 1
+            ),
+            enumerationIsComplete: true
         )
 
         XCTAssertEqual(missing.state, .closed)
-        XCTAssertNotNil(missing.runContinuity)
-        XCTAssertEqual(runningStart(resumed.state), start)
+        XCTAssertNil(missing.runContinuity)
+    }
+
+    func testUnavailablePresentTabDoesNotBecomeClosedOnNextOmission() {
+        let unavailable = transition(
+            .unavailable,
+            page: "",
+            prompt: nil,
+            response: nil,
+            at: start
+        )
+        let transientMissing = ChatGPTRuntimeReducer.absent(
+            previous: unavailable,
+            observedAt: start.addingTimeInterval(1),
+            enumerationIsComplete: true
+        )
+        let sustainedMissing = ChatGPTRuntimeReducer.absent(
+            previous: transientMissing,
+            observedAt: start.addingTimeInterval(
+                ChatGPTRuntimeReducer.continuityGrace + 1
+            ),
+            enumerationIsComplete: true
+        )
+
+        XCTAssertEqual(unavailable.state, .failed)
+        XCTAssertEqual(unavailable.lastPresentAt, start)
+        XCTAssertEqual(transientMissing.state, .failed)
+        XCTAssertEqual(sustainedMissing.state, .closed)
+    }
+
+    func testPresentedStateUsesCheckingWithoutEvidenceAndFailedWhenStale() {
+        let running = transition(.running, page: "page-a", at: start)
+
+        XCTAssertEqual(
+            ChatGPTRuntimeReducer.presentedState(for: nil, now: start),
+            .checking
+        )
+        XCTAssertEqual(
+            ChatGPTRuntimeReducer.presentedState(
+                for: running,
+                now: start.addingTimeInterval(
+                    ChatGPTRuntimeReducer.continuityGrace - 0.1
+                )
+            ),
+            running.state
+        )
+        XCTAssertEqual(
+            ChatGPTRuntimeReducer.presentedState(
+                for: running,
+                now: start.addingTimeInterval(
+                    ChatGPTRuntimeReducer.continuityGrace
+                )
+            ),
+            .failed
+        )
     }
 
     func testRepeatedMissingSamplesWithinGraceKeepActiveRun() {
@@ -646,7 +722,7 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
         XCTAssertEqual(runningStart(nextRun.state), start)
     }
 
-    func testUnknownFinishedRecoveryPreservesRunWhenPhaseIdentityAppears() {
+    func testUnknownFinishedRecoveryReturnsToActiveContinuity() {
         let first = transition(
             .running,
             page: "page-a",
@@ -693,11 +769,11 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
         )
 
         XCTAssertEqual(runningStart(unidentified.state), start)
-        XCTAssertNotNil(unidentified.runContinuity?.recoverableUntil)
+        XCTAssertNil(unidentified.runContinuity?.recoverableUntil)
         XCTAssertEqual(runningStart(identified.state), start)
     }
 
-    func testUnknownFinishedRecoveryExpiresBeforeLateIdentityAppears() {
+    func testContinuousRunningWithoutAssistantIdentityOutlivesRecoveryLease() {
         let first = transition(
             .running,
             page: "page-a",
@@ -725,7 +801,64 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
             at: finishedAt,
             previous: idle
         )
-        let unidentified = transition(
+        var continued = finished
+        for second in 1...(Int(ChatGPTRuntimeReducer.continuityGrace) + 2) {
+            continued = transition(
+                .running,
+                page: "page-a",
+                prompt: "turn-slot:prompt-a",
+                response: nil,
+                at: finishedAt.addingTimeInterval(TimeInterval(second)),
+                previous: continued
+            )
+            XCTAssertEqual(runningStart(continued.state), start)
+            XCTAssertNil(continued.runContinuity?.recoverableUntil)
+        }
+
+        let identifiedAt = finishedAt.addingTimeInterval(
+            ChatGPTRuntimeReducer.continuityGrace + 3
+        )
+        let identified = transition(
+            .running,
+            page: "page-a",
+            prompt: "turn-slot:prompt-a",
+            response: "message:response-b",
+            at: identifiedAt,
+            previous: continued
+        )
+
+        XCTAssertEqual(runningStart(identified.state), start)
+    }
+
+    func testNewPromptAfterUnknownFinishedRecoveryStartsNewRun() {
+        let first = transition(
+            .running,
+            page: "page-a",
+            prompt: "turn-slot:prompt-a",
+            response: "message:response-a",
+            at: start
+        )
+        let idleAt = start.addingTimeInterval(10)
+        let idle = transition(
+            .idle,
+            page: "page-a",
+            prompt: "turn-slot:prompt-a",
+            response: "message:response-a",
+            at: idleAt,
+            previous: first
+        )
+        let finishedAt = idleAt.addingTimeInterval(
+            ChatGPTRuntimeReducer.terminalConfirmationDelay
+        )
+        let finished = transition(
+            .idle,
+            page: "page-a",
+            prompt: "turn-slot:prompt-a",
+            response: "message:response-a",
+            at: finishedAt,
+            previous: idle
+        )
+        let recovered = transition(
             .running,
             page: "page-a",
             prompt: "turn-slot:prompt-a",
@@ -733,29 +866,18 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
             at: finishedAt.addingTimeInterval(1),
             previous: finished
         )
-        let expiredAt = finishedAt.addingTimeInterval(
-            ChatGPTRuntimeReducer.continuityGrace + 1
-        )
-        let expired = transition(
+        let newRunAt = finishedAt.addingTimeInterval(2)
+        let newRun = transition(
             .running,
             page: "page-a",
-            prompt: "turn-slot:prompt-a",
-            response: nil,
-            at: expiredAt,
-            previous: unidentified
-        )
-        let identified = transition(
-            .running,
-            page: "page-a",
-            prompt: "turn-slot:prompt-a",
+            prompt: "turn-slot:prompt-b",
             response: "message:response-b",
-            at: expiredAt.addingTimeInterval(1),
-            previous: expired
+            at: newRunAt,
+            previous: recovered
         )
 
-        XCTAssertEqual(runningStart(unidentified.state), start)
-        XCTAssertEqual(runningStart(expired.state), expiredAt)
-        XCTAssertEqual(runningStart(identified.state), expiredAt)
+        XCTAssertEqual(runningStart(recovered.state), start)
+        XCTAssertEqual(runningStart(newRun.state), newRunAt)
     }
 
     func testIdleReloadPreservesRecentFinishedRecovery() {
@@ -806,6 +928,58 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
         XCTAssertEqual(reloaded.state, finished.state)
         XCTAssertNotNil(reloaded.runContinuity)
         XCTAssertEqual(runningStart(resumed.state), start)
+    }
+
+    func testFinishedRecoverySurvivesTransientMissingTab() {
+        let first = transition(
+            .running,
+            page: "page-a",
+            prompt: "turn-slot:prompt-a",
+            response: "message:response-a",
+            at: start
+        )
+        let idleAt = start.addingTimeInterval(10)
+        let idle = transition(
+            .idle,
+            page: "page-a",
+            prompt: "turn-slot:prompt-a",
+            response: "message:response-a",
+            at: idleAt,
+            previous: first
+        )
+        let finishedAt = idleAt.addingTimeInterval(
+            ChatGPTRuntimeReducer.terminalConfirmationDelay
+        )
+        let finished = transition(
+            .idle,
+            page: "page-a",
+            prompt: "turn-slot:prompt-a",
+            response: "message:response-a",
+            at: finishedAt,
+            previous: idle
+        )
+        let transientMissing = ChatGPTRuntimeReducer.missing(
+            previous: finished,
+            observedAt: finishedAt.addingTimeInterval(1)
+        )
+        let resumed = transition(
+            .running,
+            page: "page-a",
+            prompt: "turn-slot:prompt-a",
+            response: "message:response-a",
+            at: finishedAt.addingTimeInterval(2),
+            previous: transientMissing
+        )
+        let sustainedMissing = ChatGPTRuntimeReducer.missing(
+            previous: finished,
+            observedAt: finishedAt.addingTimeInterval(
+                ChatGPTRuntimeReducer.continuityGrace + 1
+            )
+        )
+
+        XCTAssertEqual(transientMissing.state, finished.state)
+        XCTAssertEqual(runningStart(resumed.state), start)
+        XCTAssertEqual(sustainedMissing.state, .closed)
     }
 
     func testRunAfterConfirmedFinishGetsNewStart() {
@@ -915,6 +1089,102 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
         XCTAssertEqual(samples.first?.pageInstance, "")
         XCTAssertNil(samples.first?.promptInstance)
         XCTAssertNil(samples.first?.responseInstance)
+        XCTAssertNil(samples.first?.location)
+    }
+
+    func testChromeParserRetainsCachedTabLocation() {
+        let output = url
+            + "|||JOY_FIELD|||731"
+            + "|||JOY_FIELD|||4"
+            + "|||JOY_FIELD|||running::JOY::page-a::JOY::prompt-a::JOY::response-a"
+            + "|||JOY_RECORD|||"
+
+        let samples = ChromeAppleEventsMonitor.parseSamples(output)
+
+        XCTAssertEqual(samples.count, 1)
+        XCTAssertEqual(
+            samples.first?.location,
+            ChromeTabLocation(windowID: 731, tabIndex: 4)
+        )
+    }
+
+    func testPIDSpecificProbeRetainsOwningChromeProcess() throws {
+        let location = ChromeTabLocation(
+            windowID: 613217623,
+            tabIndex: 6,
+            processID: 869
+        )
+        let sample = try XCTUnwrap(ChromeAppleEventsMonitor.parseProbe(
+            url: url,
+            probeValue: "running::JOY::page-a::JOY::prompt-a::JOY::response-a",
+            location: location
+        ))
+
+        XCTAssertEqual(sample.status, .running)
+        XCTAssertEqual(sample.location, location)
+        XCTAssertEqual(sample.location?.processID, 869)
+    }
+
+    func testChromeParserMarksIncompleteEnumerationAsPartial() {
+        let output = "__JOY_PARTIAL__|||JOY_RECORD|||"
+            + url
+            + "|||JOY_FIELD|||731"
+            + "|||JOY_FIELD|||4"
+            + "|||JOY_FIELD|||running::JOY::page-a::JOY::prompt-a::JOY::"
+            + "|||JOY_RECORD|||"
+
+        switch ChromeAppleEventsMonitor.parseOutput(output) {
+        case .success(let samples, let isComplete):
+            XCTAssertFalse(isComplete)
+            XCTAssertEqual(samples.count, 1)
+            XCTAssertEqual(samples.first?.status, .running)
+        case .unavailable:
+            XCTFail("Expected a partial Chrome enumeration")
+        }
+    }
+
+    func testChromeParserKeepsPayloadWhenTabLocationIsUnavailable() {
+        let output = url
+            + "|||JOY_FIELD|||"
+            + "|||JOY_FIELD|||"
+            + "|||JOY_FIELD|||running::JOY::page-a::JOY::prompt-a::JOY::"
+            + "|||JOY_RECORD|||"
+
+        let samples = ChromeAppleEventsMonitor.parseSamples(output)
+
+        XCTAssertEqual(samples.count, 1)
+        XCTAssertEqual(samples.first?.status, .running)
+        XCTAssertNil(samples.first?.location)
+    }
+
+    func testChromeParserTreatsDroppedRecordAsIncompleteEnumeration() {
+        let output = url
+            + "|||JOY_FIELD|||idle::JOY::page-a::JOY::::JOY::"
+            + "|||JOY_RECORD|||malformed-record|||JOY_RECORD|||"
+
+        switch ChromeAppleEventsMonitor.parseOutput(output) {
+        case .success(let samples, let isComplete):
+            XCTAssertFalse(isComplete)
+            XCTAssertEqual(samples.count, 1)
+        case .unavailable:
+            XCTFail("Expected a partial Chrome enumeration")
+        }
+    }
+
+    func testChromeParserIgnoresValidNonConversationRoutesForCompleteness() {
+        let output = url
+            + "|||JOY_FIELD|||idle::JOY::page-a::JOY::::JOY::"
+            + "|||JOY_RECORD|||https://chatgpt.com/"
+            + "|||JOY_FIELD|||unavailable::JOY::::JOY::::JOY::"
+            + "|||JOY_RECORD|||"
+
+        switch ChromeAppleEventsMonitor.parseOutput(output) {
+        case .success(let samples, let isComplete):
+            XCTAssertTrue(isComplete)
+            XCTAssertEqual(samples.count, 1)
+        case .unavailable:
+            XCTFail("Expected a complete Chrome enumeration")
+        }
     }
 
     func testStrongestSamplesPreferTrackedPageWhenPrioritiesTie() {
@@ -925,11 +1195,11 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
 
         let strongest = ChatGPTRuntimeReducer.strongestSamples(
             samples,
-            configuredURLs: [url],
-            preferredPageInstances: [url: "page-a"]
+            configuredTargetKeys: [targetKey],
+            preferredPageInstances: [targetKey: "page-a"]
         )
 
-        XCTAssertEqual(strongest[url]?.pageInstance, "page-a")
+        XCTAssertEqual(strongest[targetKey]?.pageInstance, "page-a")
     }
 
     func testStrongestSamplesPreferRunningOverIdle() {
@@ -940,11 +1210,11 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
 
         let strongest = ChatGPTRuntimeReducer.strongestSamples(
             samples,
-            configuredURLs: [url],
-            preferredPageInstances: [url: "page-a"]
+            configuredTargetKeys: [targetKey],
+            preferredPageInstances: [targetKey: "page-a"]
         )
 
-        XCTAssertEqual(strongest[url]?.status, .running)
+        XCTAssertEqual(strongest[targetKey]?.status, .running)
     }
 
     func testStrongestSamplesPreferUnavailableOverDuplicateIdle() {
@@ -955,11 +1225,11 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
 
         let strongest = ChatGPTRuntimeReducer.strongestSamples(
             samples,
-            configuredURLs: [url],
-            preferredPageInstances: [url: "page-a"]
+            configuredTargetKeys: [targetKey],
+            preferredPageInstances: [targetKey: "page-a"]
         )
 
-        XCTAssertEqual(strongest[url]?.status, .unavailable)
+        XCTAssertEqual(strongest[targetKey]?.status, .unavailable)
     }
 
     func testStrongestSamplesPreferTrackedFailureOverDuplicateUnavailable() {
@@ -970,12 +1240,64 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
 
         let strongest = ChatGPTRuntimeReducer.strongestSamples(
             samples,
-            configuredURLs: [url],
-            preferredPageInstances: [url: "page-a"]
+            configuredTargetKeys: [targetKey],
+            preferredPageInstances: [targetKey: "page-a"]
         )
 
-        XCTAssertEqual(strongest[url]?.status, .failed)
-        XCTAssertEqual(strongest[url]?.pageInstance, "page-a")
+        XCTAssertEqual(strongest[targetKey]?.status, .failed)
+        XCTAssertEqual(strongest[targetKey]?.pageInstance, "page-a")
+    }
+
+    func testConfiguredConversationMatchesRunningSampleAfterWrapperChange() {
+        let conversationID = "6a234240-1ba8-832c-b452-46ceea131482"
+        let configuredURL = "https://chatgpt.com/g/g-p-old/c/\(conversationID)"
+        let liveURL = "https://chatgpt.com/g/g-p-new/c/\(conversationID)?tab=chats"
+        let configuredKey = URLNormalizer.target(configuredURL)!.key
+        let samples = [
+            ChromeTabSample(
+                url: URLNormalizer.normalizeChatGPT(liveURL)!,
+                status: .running,
+                pageInstance: "page-live",
+                promptInstance: "turn-slot:prompt-a",
+                responseInstance: nil,
+                location: ChromeTabLocation(windowID: 731, tabIndex: 4)
+            )
+        ]
+
+        let strongest = ChatGPTRuntimeReducer.strongestSamples(
+            samples,
+            configuredTargetKeys: [configuredKey],
+            preferredPageInstances: [:]
+        )
+
+        XCTAssertEqual(strongest[configuredKey]?.status, .running)
+        XCTAssertEqual(
+            strongest[configuredKey]?.url,
+            URLNormalizer.normalizeChatGPT(liveURL)
+        )
+    }
+
+    func testDifferentConversationDoesNotMatchConfiguredTarget() {
+        let configuredKey = URLNormalizer.target(
+            "https://chatgpt.com/g/g-p-old/c/conversation-a"
+        )!.key
+        let samples = [
+            ChromeTabSample(
+                url: "https://chatgpt.com/g/g-p-new/c/conversation-b",
+                status: .running,
+                pageInstance: "page-live",
+                promptInstance: nil,
+                responseInstance: nil
+            )
+        ]
+
+        let strongest = ChatGPTRuntimeReducer.strongestSamples(
+            samples,
+            configuredTargetKeys: [configuredKey],
+            preferredPageInstances: [:]
+        )
+
+        XCTAssertNil(strongest[configuredKey])
     }
 
     private func transition(
@@ -1016,5 +1338,9 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
     private func runningStart(_ state: ChatState) -> Date? {
         guard case .running(let startedAt) = state else { return nil }
         return startedAt
+    }
+
+    private var targetKey: String {
+        URLNormalizer.target(url)!.key
     }
 }
