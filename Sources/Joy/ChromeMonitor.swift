@@ -44,7 +44,6 @@ enum ChromeAppleEventsMonitor {
         set fieldSeparator to "|||JOY_FIELD|||"
         set recordSeparator to "|||JOY_RECORD|||"
         set outputText to ""
-        set successfulProbeCount to 0
         set hadProbeError to false
 
         if application "Google Chrome" is not running then return outputText
@@ -58,9 +57,7 @@ enum ChromeAppleEventsMonitor {
                             try
                                 set probeValue to execute browserTab javascript probeScript
                                 set outputText to outputText & currentURL & fieldSeparator & probeValue & recordSeparator
-                                set successfulProbeCount to successfulProbeCount + 1
                             on error
-                                set hadProbeError to true
                                 set probeValue to "unavailable::JOY::::JOY::::JOY::"
                                 set outputText to outputText & currentURL & fieldSeparator & probeValue & recordSeparator
                             end try
@@ -72,7 +69,7 @@ enum ChromeAppleEventsMonitor {
             end repeat
         end tell
 
-        if successfulProbeCount is 0 and hadProbeError and outputText is "" then
+        if hadProbeError and outputText is "" then
             return "__JOY_ERROR__"
         end if
         return outputText
@@ -82,7 +79,7 @@ enum ChromeAppleEventsMonitor {
     private static let probeJavaScript = #"""
     (() => {
       const visible = (element) => {
-        if (!element || element.getClientRects().length === 0) return false;
+        if (element.getClientRects().length === 0) return false;
         const style = getComputedStyle(element);
         return style.visibility !== "hidden" && style.display !== "none";
       };
@@ -248,7 +245,6 @@ struct MonitorObservation {
     let responseInstance: String?
     let runContinuity: RunContinuity?
     let pendingTerminalAt: Date?
-    let consecutiveMissingSamples: Int
 
     init(
         state: ChatState,
@@ -257,8 +253,7 @@ struct MonitorObservation {
         promptInstance: String? = nil,
         responseInstance: String? = nil,
         runContinuity: RunContinuity? = nil,
-        pendingTerminalAt: Date? = nil,
-        consecutiveMissingSamples: Int = 0
+        pendingTerminalAt: Date? = nil
     ) {
         self.state = state
         self.observedAt = observedAt
@@ -267,7 +262,6 @@ struct MonitorObservation {
         self.responseInstance = responseInstance
         self.runContinuity = runContinuity
         self.pendingTerminalAt = pendingTerminalAt
-        self.consecutiveMissingSamples = consecutiveMissingSamples
     }
 }
 
@@ -333,7 +327,6 @@ enum ChatGPTRuntimeReducer {
             let retainedRecoveryDeadline = previous?.runContinuity.flatMap {
                 continuity -> Date? in
                 guard continuedRunStart != nil,
-                      !promptChanged,
                       let recoverableUntil = continuity.recoverableUntil,
                       observedAt <= recoverableUntil,
                       previous?.responseInstance != nil,
@@ -453,8 +446,7 @@ enum ChatGPTRuntimeReducer {
             promptInstance: previous?.promptInstance,
             responseInstance: previous?.responseInstance,
             runContinuity: previous?.runContinuity,
-            pendingTerminalAt: previous?.pendingTerminalAt,
-            consecutiveMissingSamples: previous?.consecutiveMissingSamples ?? 0
+            pendingTerminalAt: previous?.pendingTerminalAt
         )
     }
 
@@ -462,7 +454,6 @@ enum ChatGPTRuntimeReducer {
         previous: MonitorObservation?,
         observedAt: Date
     ) -> MonitorObservation {
-        let missingCount = (previous?.consecutiveMissingSamples ?? 0) + 1
         let retainedContinuity = previous?.runContinuity.flatMap { continuity in
             if let recoverableUntil = continuity.recoverableUntil {
                 return observedAt <= recoverableUntil ? continuity : nil
@@ -482,8 +473,7 @@ enum ChatGPTRuntimeReducer {
                 promptInstance: previous?.promptInstance,
                 responseInstance: previous?.responseInstance,
                 runContinuity: retainedContinuity,
-                pendingTerminalAt: previous?.pendingTerminalAt,
-                consecutiveMissingSamples: missingCount
+                pendingTerminalAt: previous?.pendingTerminalAt
             )
         }
 
@@ -494,8 +484,7 @@ enum ChatGPTRuntimeReducer {
             promptInstance: previous?.promptInstance,
             responseInstance: previous?.responseInstance,
             runContinuity: retainedContinuity,
-            pendingTerminalAt: previous?.pendingTerminalAt,
-            consecutiveMissingSamples: missingCount
+            pendingTerminalAt: previous?.pendingTerminalAt
         )
     }
 

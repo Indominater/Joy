@@ -334,7 +334,7 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
         XCTAssertEqual(runningStart(nextRun.state), nextRunAt)
     }
 
-    func testRealSampleResetsMissingConfirmation() {
+    func testRealSampleRefreshesMissingContinuity() {
         let first = transition(.running, page: "page-a", at: start)
         let firstMissing = ChatGPTRuntimeReducer.missing(
             previous: first,
@@ -352,7 +352,6 @@ final class ChatGPTRuntimeReducerTests: XCTestCase {
         )
 
         XCTAssertEqual(runningStart(laterMissing.state), start)
-        XCTAssertEqual(laterMissing.consecutiveMissingSamples, 1)
     }
 
     func testSustainedPageFailureEndsRun() {
