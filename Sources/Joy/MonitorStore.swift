@@ -8,12 +8,11 @@ final class MonitorStore: ObservableObject {
     @Published private(set) var now = Date()
     @Published private(set) var undoableClearSlotID: Int?
 
-    @Published private var observations: [String: MonitorObservation] = [:]
+    private var observations: [String: MonitorObservation] = [:]
     private var timer: Timer?
     private var pollTask: Task<Void, Never>?
     private var clearUndoExpirationTask: Task<Void, Never>?
     private let codexMonitor = CodexSessionMonitor()
-    private var chromeTabSamples: [String: ChromeTabSample] = [:]
     private let userDefaults: UserDefaults
     private let clearUndoLifetime: Duration
     private let undoClock = ContinuousClock()
@@ -134,10 +133,9 @@ final class MonitorStore: ObservableObject {
         let raw = slot.url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { return .unconfigured }
         guard let target = URLNormalizer.target(raw) else { return .invalid }
-        return ChatGPTRuntimeReducer.presentedState(
-            for: observations[target.key],
-            now: now
-        )
+        guard let observation = observations[target.key] else { return .closed }
+        guard now.timeIntervalSince(observation.observedAt) < 8 else { return .closed }
+        return observation.state
     }
 
     func focus(_ slot: ChatSlot) {
@@ -148,11 +146,7 @@ final class MonitorStore: ObservableObject {
 
         switch target {
         case .chatGPT(let url, _):
-            let sample = chromeTabSamples[target.key]
-            ChromeTabFocus.focus(
-                url: sample?.url ?? url,
-                location: sample?.location
-            )
+            ChromeTabFocus.focus(url: url)
         case .codex(let threadID):
             let deepLink = URL(string: "codex://threads/\(threadID)")!
             DeepLinkFocus.open(deepLink)
@@ -164,17 +158,14 @@ final class MonitorStore: ObservableObject {
         guard pollTask == nil else { return }
 
         let targets = slots.compactMap { URLNormalizer.target($0.url) }
-        let chatTargetKeys = Set(targets.compactMap { target -> String? in
-            guard case .chatGPT = target else { return nil }
-            return target.key
+        let chatURLs = Set(targets.compactMap { target -> String? in
+            guard case .chatGPT(let url, _) = target else { return nil }
+            return url
         })
         let codexThreadIDs = Set(targets.compactMap { target -> String? in
             guard case .codex(let threadID) = target else { return nil }
             return threadID
         })
-        chromeTabSamples = chromeTabSamples.filter {
-            chatTargetKeys.contains($0.key)
-        }
 
         // Keep the last observation warm during the brief Undo window so a
         // restored row immediately returns to its previous status instead of
@@ -185,33 +176,23 @@ final class MonitorStore: ObservableObject {
         let wantedKeys = Set(targets.map(\.key))
             .union(pendingClearKey.map { [$0] } ?? [])
         observations = observations.filter { wantedKeys.contains($0.key) }
-        guard !chatTargetKeys.isEmpty || !codexThreadIDs.isEmpty else { return }
+        guard !chatURLs.isEmpty || !codexThreadIDs.isEmpty else { return }
 
         let codexMonitor = self.codexMonitor
-        let chromeProcessIDs = chatTargetKeys.isEmpty
-            ? []
-            : ChromeProcessLocator.monitorableProcessIDs()
         pollTask = Task { [weak self] in
             async let codexSamples = codexMonitor.sample(threadIDs: codexThreadIDs)
             let chromeResult: ChromeMonitorResult
-            if chatTargetKeys.isEmpty {
-                chromeResult = .success([], isComplete: true)
+            if chatURLs.isEmpty {
+                chromeResult = .success([])
             } else {
                 chromeResult = await Task.detached(priority: .utility) {
-                    ChromeScriptingBridgeMonitor.sample(
-                        processIDs: chromeProcessIDs
-                    )
+                    ChromeAppleEventsMonitor.sample()
                 }.value
             }
 
-            guard !Task.isCancelled, let self else { return }
-            self.applyChrome(
-                chromeResult,
-                configuredTargetKeys: chatTargetKeys
-            )
-
             let resolvedCodexSamples = await codexSamples
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, let self else { return }
+            self.applyChrome(chromeResult, configuredURLs: chatURLs)
             self.applyCodex(resolvedCodexSamples)
             self.pollTask = nil
         }
@@ -219,43 +200,41 @@ final class MonitorStore: ObservableObject {
 
     private func applyChrome(
         _ result: ChromeMonitorResult,
-        configuredTargetKeys: Set<String>
+        configuredURLs: Set<String>
     ) {
         let observedAt = Date()
 
         switch result {
         case .unavailable:
-            for key in configuredTargetKeys {
+            for url in configuredURLs {
+                let key = MonitorTarget.chatGPTKey(url: url)
                 observations[key] = ChatGPTRuntimeReducer.interrupted(
                     previous: observations[key],
                     observedAt: observedAt
                 )
             }
-        case .success(let samples, let isComplete):
+        case .success(let samples):
             let preferredPageInstances = Dictionary(
-                uniqueKeysWithValues: configuredTargetKeys.compactMap { key in
-                    observations[key]?.pageInstance.map { (key, $0) }
+                uniqueKeysWithValues: configuredURLs.compactMap { url in
+                    let key = MonitorTarget.chatGPTKey(url: url)
+                    return observations[key]?.pageInstance.map { (url, $0) }
                 }
             )
             let strongestSample = ChatGPTRuntimeReducer.strongestSamples(
                 samples,
-                configuredTargetKeys: configuredTargetKeys,
+                configuredURLs: configuredURLs,
                 preferredPageInstances: preferredPageInstances
             )
 
-            for key in configuredTargetKeys {
-                guard let sample = strongestSample[key] else {
-                    if isComplete {
-                        chromeTabSamples[key] = nil
-                    }
-                    observations[key] = ChatGPTRuntimeReducer.absent(
+            for url in configuredURLs {
+                let key = MonitorTarget.chatGPTKey(url: url)
+                guard let sample = strongestSample[url] else {
+                    observations[key] = ChatGPTRuntimeReducer.missing(
                         previous: observations[key],
-                        observedAt: observedAt,
-                        enumerationIsComplete: isComplete
+                        observedAt: observedAt
                     )
                     continue
                 }
-                chromeTabSamples[key] = sample
                 observations[key] = ChatGPTRuntimeReducer.transition(
                     sample: sample,
                     previous: observations[key],
@@ -307,100 +286,58 @@ final class MonitorStore: ObservableObject {
 }
 
 enum ChromeTabFocus {
-    @MainActor
-    static func focus(url: String, location: ChromeTabLocation? = nil) {
-        let processIDs = ChromeProcessLocator.monitorableProcessIDs()
-        guard !processIDs.isEmpty else {
-            openInNewGUIChrome(url: url)
-            return
-        }
+    // Chrome can restore its previously key window while activation is still
+    // settling. Keep the match's stable window ID and raise it only afterward.
+    static let appleScript = #"""
+    on run argv
+        set targetURL to item 1 of argv
 
-        let orderedProcessIDs = ChromeScriptingBridgeFocus.orderedProcessIDs(
-            processIDs,
-            preferredProcessID: location?.processID
-        )
-        guard let processID = orderedProcessIDs.first,
-              let application = NSRunningApplication(
-                processIdentifier: processID
-              )
-        else {
+        tell application "Google Chrome"
+            repeat with browserWindow in windows
+                set tabNumber to 0
+                repeat with browserTab in tabs of browserWindow
+                    set tabNumber to tabNumber + 1
+                    set currentURL to URL of browserTab as text
+                    if currentURL starts with targetURL then
+                        set targetWindowID to id of browserWindow
+                        set minimized of window id targetWindowID to false
+                        set active tab index of window id targetWindowID to tabNumber
+                        activate
+                        repeat 20 times
+                            if frontmost then exit repeat
+                            delay 0.01
+                        end repeat
+                        set index of window id targetWindowID to 1
+                        return "found"
+                    end if
+                end repeat
+            end repeat
+
+            if (count of windows) is 0 then
+                make new window
+                set URL of active tab of front window to targetURL
+            else
+                tell front window
+                    make new tab with properties {URL:targetURL}
+                    set active tab index to (count of tabs)
+                end tell
+            end if
+            activate
+        end tell
+    end run
+    """#
+
+    static func focus(url: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", appleScript, url]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
             NSSound.beep()
-            return
         }
-        Task { @MainActor in
-            let focused = await runFocusSequence(
-                prepare: {
-                    // Order the exact target before activation. Otherwise
-                    // Chrome can restore its former key window and strand the
-                    // requested tab on another Space.
-                    await Task.detached(priority: .userInitiated) {
-                        ChromeScriptingBridgeFocus.focus(
-                            url: url,
-                            location: location,
-                            processIDs: processIDs
-                        )
-                    }.value
-                },
-                activate: {
-                    application.activate(options: [.activateAllWindows])
-                },
-                settle: {
-                    try? await Task.sleep(for: .milliseconds(150))
-                },
-                verify: {
-                    // Activation can perform one final restoration of Chrome's
-                    // old key window. Reapply the stable ID after the Space
-                    // switch so the conversation remains visibly in front.
-                    await Task.detached(priority: .userInitiated) {
-                        ChromeScriptingBridgeFocus.focus(
-                            url: url,
-                            location: location,
-                            processIDs: processIDs
-                        )
-                    }.value
-                }
-            )
-            if !focused {
-                NSSound.beep()
-            }
-        }
-    }
-
-    @MainActor
-    static func runFocusSequence(
-        prepare: () async -> Bool,
-        activate: () -> Void,
-        settle: () async -> Void,
-        verify: () async -> Bool
-    ) async -> Bool {
-        guard await prepare() else { return false }
-        activate()
-        await settle()
-        return await verify()
-    }
-
-    @MainActor
-    private static func openInNewGUIChrome(url: String) {
-        let workspace = NSWorkspace.shared
-        guard let targetURL = URL(string: url),
-              let chromeURL = workspace.urlForApplication(
-                withBundleIdentifier: "com.google.Chrome"
-              )
-        else {
-            NSSound.beep()
-            return
-        }
-
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.activates = true
-        // A same-bundle headless process may already be running. Force a new
-        // GUI instance instead of allowing Launch Services to route to it.
-        configuration.createsNewApplicationInstance = true
-        workspace.open(
-            [targetURL],
-            withApplicationAt: chromeURL,
-            configuration: configuration
-        )
     }
 }
 

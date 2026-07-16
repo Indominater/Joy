@@ -23,7 +23,6 @@ enum JoyStatusText {
         switch state {
         case .unconfigured: "Ready"
         case .invalid: "Invalid"
-        case .checking: "Checking"
         case .closed: "Closed"
         case .idle: "Idle"
         case .running(let startedAt):
@@ -44,6 +43,7 @@ enum JoyStatusText {
 enum JoyRowLayout {
     static let height: CGFloat = 44
     static let rowSpacing: CGFloat = 6
+    static let outerMargin = rowSpacing
     static let rowCornerRadius: CGFloat = 14
     static let statusPillWidth: CGFloat = 108
     static let statusPillHeight: CGFloat = 28
@@ -54,10 +54,6 @@ enum JoyRowLayout {
     static let statusContentSpacing: CGFloat = 5
     static let statusIconWidth: CGFloat = 10
     static let statusFontSize: CGFloat = 12
-    static let statusLabelWidth = statusPillWidth
-        - (2 * statusContentInset)
-        - statusIconWidth
-        - statusContentSpacing
 }
 
 private struct JoyTerminalPulseTaskID: Equatable {
@@ -69,7 +65,7 @@ struct JoyView: View {
     @ObservedObject var store: MonitorStore
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .bottom) {
             ArtworkBackground()
 
             VStack(spacing: JoyRowLayout.rowSpacing) {
@@ -91,10 +87,8 @@ struct JoyView: View {
                     )
                 }
             }
-            .padding(.horizontal, 10)
-            // The transparent titlebar supplies the visual top inset; this
-            // compensation balances the first and last rows.
-            .padding(.bottom, 12)
+            .padding(.horizontal, JoyRowLayout.outerMargin)
+            .padding(.bottom, JoyRowLayout.outerMargin)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .preferredColorScheme(.dark)
@@ -399,7 +393,6 @@ private struct StatusPill: View {
         case .finished: "checkmark"
         case .failed, .invalid: "exclamationmark"
         case .closed: "rectangle.slash"
-        case .checking: "ellipsis"
         case .unconfigured, .idle: "circle"
         }
     }
@@ -413,7 +406,6 @@ private struct StatusPill: View {
         case .finished: Color(hex: 0x78DFAF)
         case .failed, .invalid: Color(hex: 0xFF795F)
         case .closed: Color(hex: 0xC69AA8)
-        case .checking: Color(hex: 0xB9AAB5)
         case .unconfigured, .idle: Color(hex: 0xE9A98F)
         }
     }
@@ -427,7 +419,6 @@ private struct StatusPill: View {
         case .finished: Color(hex: 0xC4F1D8)
         case .failed, .invalid: Color(hex: 0xFFC0B0)
         case .closed: Color(hex: 0xE2C7CF)
-        case .checking: Color(hex: 0xE1D7DC)
         case .unconfigured, .idle: Color(hex: 0xF1D4C7)
         }
     }
