@@ -1,6 +1,6 @@
 # Joy
 
-Joy is a compact, always-on macOS panel for monitoring running ChatGPT conversations and Codex tasks.
+Joy is a compact macOS overlay for monitoring ChatGPT and Codex tasks.
 
 ## Requirements
 
