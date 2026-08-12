@@ -1,8 +1,6 @@
 # Joy
 
-Joy is a compact, always-on macOS panel for monitoring up to three existing ChatGPT conversations and Codex tasks. It is a single app: there is no browser extension, native-messaging host, helper executable, account connection, or API key.
-
-Joy does **not** send prompts or store conversation text.
+Joy is a compact, always-on macOS panel for monitoring running ChatGPT conversations and Codex tasks.
 
 ## Requirements
 
